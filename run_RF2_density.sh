@@ -74,6 +74,7 @@ while [ : ]; do
         echo "                              Understands Cn, Dn, T, I, O (with n an integer)."
         echo "     -p|--pair: If more than one chain is provided, pair MSAs based on taxonomy ID."
         echo "     -h|--hhpred: Run hhpred to generate templates"
+        echo "     -m|--mapfile filename: CryoEM density map to model into"
         exit 1
         ;;
     -p | --pair)
@@ -111,17 +112,34 @@ argstring=""
 fastas=()
 for i in "$@"
 do
-    tag=`basename $i | sed -E 's/\.fasta$|\.fas$|\.fa$//'`
-    fastas=(${fastas[@]} `awk -v TAG="$tag" -v WDIR="$WDIR" '/^>/{close(out); out=WDIR "/" TAG "_" ++c ".fa"; print out} out!=""{print > out}' $i`)
+    IFS=': ' read -r -a array <<< "$i"
+    fasta=${array[0]}
+    if [ "${array[1]}" = "" ]
+    then
+        count=1
+    else
+        count=${array[1]}
+    fi
+    tag=`basename $fasta | sed -E 's/\.fasta$|\.fas$|\.fa$//'`
+    fastas=(${fastas[@]} `awk -v TAG="$tag" -v WDIR="$WDIR" '/^>/{close(out); out=WDIR "/" TAG "_" ++c ".fa"; print out} out!=""{print > out}' $fasta`)
+    counts=(`for i in "${fastas[@]}"; do echo $count; done`)
 done
 
-nP=0
-for i in "${fastas[@]}"
-do
-    tag=`basename $i | sed -E 's/\.fasta$|\.fas$|\.fa$//'`
+#echo ${fastas[@]}
+#echo ${counts[@]}
 
-    proteinMSA $i $tag $hhpred
-    argstring+="$WDIR/$tag.msa0.a3m"
+nfastas=${#fastas[@]}
+nP=0
+
+for ((i = 0 ; i < nfastas ; i++ )); 
+do 
+    fasta_i=${fastas[$i]}
+    count_i=${counts[$i]}
+
+    tag=`basename $fasta_i | sed -E 's/\.fasta$|\.fas$|\.fa$//'`
+
+    proteinMSA $fasta_i $tag $hhpred
+    argstring+="$WDIR/$tag.msa0.a3m:$count_i"
     if [[ $hhpred -eq 1 ]]; then
         argstring+=":$WDIR/$tag.hhr:$WDIR/$tag.atab"
     fi
@@ -158,6 +176,7 @@ python $PIPEDIR/network/predict.py \
     -prefix $WDIR/models/model \
     -model $PIPEDIR/network/weights/RF2_apr23.pt \
     -db $HHDB \
+    -mapfile $MAP \
     -symm $symm #2> $WDIR/log/network.stderr 1> $WDIR/log/network.stdout 
 
 echo "Done"

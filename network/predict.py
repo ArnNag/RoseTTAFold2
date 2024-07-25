@@ -250,7 +250,7 @@ class Predictor():
         return True
 
     def predict(
-        self, inputs, out_prefix, symm="C1", mapfile=None, ffdb=None,
+        self, inputs, out_prefix, symm="C1", ffdb=None,
         n_recycles=4, n_models=1, subcrop=-1, topk=-1, low_vram=False, nseqs=256, nseqs_full=2048,
         n_templ=4, msa_mask=0.0, is_training=False, msa_concat_mode="diag"
     ):
@@ -384,6 +384,7 @@ class Predictor():
         ###
         # pass 3, symmetry
         xyz_prev = xyz_t[:,0]
+        print ((xyz_prev[:,:L].shape))
         xyz_prev, symmsub = find_symm_subs(xyz_prev[:,:L],symmRs,symmmeta)
 
         Osub = symmsub.shape[0]
@@ -414,20 +415,16 @@ class Predictor():
         mask_t_2d = mask_t_2d[:,:,None]*mask_t_2d[:,:,:,None] # (B, T, L, L)
         mask_t_2d = mask_t_2d.float()*same_chain.float()[:,None] # (ignore inter-chain region)
 
-        if is_training:
-            self.model.train()
-        else:
-            self.model.eval()
+        self.model.eval()
+
         for i_trial in range(n_models):
-            #if os.path.exists("%s_%02d_init.pdb"%(out_prefix, i_trial)):
-            #    continue
             torch.cuda.reset_peak_memory_stats()
             start_time = time.time()
             self.run_prediction(
                 msa_orig, ins_orig, 
                 t1d, xyz_t, alpha_t, mask_t_2d, 
                 xyz_prev, mask_prev, same_chain, idx_pdb,
-                symmids, symmsub, symmRs, symmmeta,  Ls, mapfile, 
+                symmids, symmsub, symmRs, symmmeta,  Ls, None, 
                 n_recycles, nseqs, nseqs_full, subcrop, topk, low_vram,
                 "%s_%02d"%(out_prefix, i_trial),
                 msa_mask=msa_mask
@@ -437,8 +434,120 @@ class Predictor():
             print(f"runtime={runtime:.2f} vram={vram:.2f}")
             torch.cuda.empty_cache()
 
+    def predict_w_dens(
+        self, inputs, out_prefix, symm="C1", ffdb=None, mapfile=None,
+        n_recycles=4, n_models=1, subcrop=-1, topk=-1, low_vram=False, nseqs=256, nseqs_full=2048,
+        n_templ=4, msa_mask=0.0, is_training=False, msa_concat_mode="diag"
+    ):
+        def to_ranges(txt):
+            return [[int(x) for x in r.strip().split('-')]
+                    for r in txt.strip().split(',')]
+
+        self.xyz_converter = self.xyz_converter.cpu()
+
+        allpreds = []
+        for i,seq_i in enumerate(inputs):
+            symmids,symmRs,symmmeta,symmoffset = symm_subunit_matrix(symm)
+            self.xyz_converter = self.xyz_converter.to('cpu')
+
+            fseq_i =  seq_i.split(':')
+            a3m_i = fseq_i[0]
+            if (len(fseq_i)>1):
+                count_i = int(fseq_i[1])
+            else:
+                count_i = 1
+
+            msa_i, ins_i, Ls_i = parse_a3m(a3m_i)
+            msa_i = torch.tensor(msa_i).long()
+            ins_i = torch.tensor(ins_i).long()
+            if (msa_i.shape[0] > nseqs_full):
+                idxs_tokeep = np.random.permutation(msa_i.shape[0])[:nseqs_full]
+                idxs_tokeep[0] = 0  # keep best
+                msa_i = msa_i[idxs_tokeep]
+                ins_i = ins_i[idxs_tokeep]
+
+            L = sum(Ls_i)
+
+            xyz_t = INIT_CRDS.reshape(1,1,27,3).repeat(n_templ,L,1,1) + torch.rand(n_templ,L,1,3)*5.0 - 2.5
+            mask_t = torch.full((n_templ, L, 27), False) 
+            t1d = torch.nn.functional.one_hot(torch.full((n_templ, L), 20).long(), num_classes=21).float() # all gaps
+            t1d = torch.cat((t1d, torch.zeros((n_templ,L,1)).float()), -1)
+
+            same_chain = torch.zeros((1,L,L), dtype=torch.bool, device=xyz_t.device)
+            stopres = 0
+            for i in range(1,len(Ls_i)):
+                startres,stopres = sum(Ls_i[:(i-1)]), sum(Ls_i[:i])
+                same_chain[:,startres:stopres,startres:stopres] = True
+            same_chain[:,stopres:,stopres:] = True
+
+            xyz_t = xyz_t.float().unsqueeze(0)
+            mask_t = mask_t.unsqueeze(0)
+            t1d = t1d.float().unsqueeze(0)
+
+            seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
+            alpha, _, alpha_mask, _ = self.xyz_converter.get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, mask_in=mask_t.reshape(-1,L,27))
+            alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
+
+            alpha[torch.isnan(alpha)] = 0.0
+            alpha = alpha.reshape(1,-1,L,10,2)
+            alpha_mask = alpha_mask.reshape(1,-1,L,10,1)
+            alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3*10)
+
+            xyz_prev = xyz_t[:,0]
+            xyz_prev, symmsub = find_symm_subs(xyz_prev[:,:L],symmRs,symmmeta)
+
+            Osub = symmsub.shape[0]
+            mask_t = mask_t.repeat(1,1,Osub,1)
+            alpha_t = alpha_t.repeat(1,1,Osub,1)
+            mask_prev = mask_t[:,0]
+            xyz_t = xyz_t.repeat(1,1,Osub,1,1)
+            t1d = t1d.repeat(1,1,Osub,1)
+
+            # symmetrize msa
+            msa_orig, ins_orig = msa_i, ins_i
+            effL = Osub*L
+            if (Osub>1):
+                msa_orig, ins_orig = merge_a3m_homo(msa_orig, ins_orig, Osub, mode=msa_concat_mode)
+
+            # (re) index
+            idx_pdb = torch.arange(Osub*L)[None,:]
+            same_chain = torch.zeros((1,Osub*L,Osub*L)).long()
+            i_start = 0
+            for o_i in range(Osub):
+                for li in Ls_i:
+                    i_stop = i_start + li
+                    idx_pdb[:,i_stop:] += 100
+                    same_chain[:,i_start:i_stop,i_start:i_stop] = 1
+                    i_start = i_stop
+
+            mask_t_2d = mask_t[:,:,:,:3].all(dim=-1) # (B, T, L)
+            mask_t_2d = mask_t_2d[:,:,None]*mask_t_2d[:,:,:,None] # (B, T, L, L)
+            mask_t_2d = mask_t_2d.float()*same_chain.float()[:,None] # (ignore inter-chain region)
+
+            self.model.eval()
+
+            bestmodel = None
+            for i_trial in range(n_models):
+                model_i = self.run_prediction(
+                    msa_orig, ins_orig, 
+                    t1d, xyz_t, alpha_t, mask_t_2d, 
+                    xyz_prev, mask_prev, same_chain, idx_pdb,
+                    symmids, symmsub, symmRs, symmmeta,  Ls_i, None, 
+                    n_recycles, nseqs, nseqs_full, subcrop, topk, low_vram,
+                    "%s_%02d_%02d"%(out_prefix, i, i_trial),
+                    msa_mask=msa_mask
+                )
+                torch.cuda.empty_cache()
+                if (bestmodel is None or torch.mean(bestmodel['plddt']) < torch.mean(retval['plddt']) ):
+                    bestmodel = model_i
+            allpreds.append( ("%s_%02d_%02d_pred.pdb"%(out_prefix, i, i_trial), bestmodel,count_i) )
+
+        from density import rosetta_density_dock
+        rosetta_density_dock(allpreds, mapfile)
+
+
     def run_prediction(
-        self, msa_orig, ins_orig, 
+        self, msa_orig, ins_orig,
         t1d, xyz_t, alpha_t, mask_t, 
         xyz_prev, mask_prev, same_chain, idx_pdb, 
         symmids, symmsub, symmRs, symmmeta, L_s, mapfile, 
@@ -595,16 +704,22 @@ class Predictor():
         outfile = "%s_pred.pdb"%(out_prefix)
         util.writepdb(outfile, best_xyzfull[0], seq_full[0], L_s, bfacts=100*best_lddtfull[0])
 
-        print (mapfile)
-        if mapfile is not None and mapfile != "None":
-            from density import rosetta_density_dock
-            rosetta_density_dock(outfile,mapfile)
-
         prob_s = [prob.permute(0,2,3,1).detach().cpu().numpy().astype(np.float16) for prob in prob_s]
         np.savez_compressed("%s.npz"%(out_prefix),
             dist=prob_s[0].astype(np.float16),
             lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
             pae=best_pae[0].detach().cpu().numpy().astype(np.float16))
+
+        # return prediction
+        retval = {
+            'xyz': best_xyzfull[0],
+            'Ls': L_s,
+            'seq': seq_full[0],
+            'plddt': best_lddtfull[0],
+            'pae': best_pae[0],
+        }
+
+        return retval
 
 
 if __name__ == "__main__":
@@ -625,17 +740,31 @@ if __name__ == "__main__":
         print ("Running on CPU")
         pred = Predictor(args.model, torch.device("cpu"))
 
-    pred.predict(
-        inputs=args.inputs, 
-        out_prefix=args.prefix, 
-        symm=args.symm, 
-        n_recycles=args.n_recycles, 
-        n_models=args.n_models, 
-        subcrop=args.subcrop, 
-        topk=args.topk, 
-        low_vram=args.low_vram, 
-        nseqs=args.nseqs, 
-        nseqs_full=args.nseqs_full, 
-        mapfile=args.mapfile, 
-        ffdb=ffdb)
+    if args.mapfile is not None and args.mapfile != "None":
+        pred.predict_w_dens(
+            inputs=args.inputs, 
+            out_prefix=args.prefix, 
+            symm=args.symm, 
+            n_recycles=args.n_recycles, 
+            n_models=args.n_models, 
+            subcrop=args.subcrop, 
+            topk=args.topk, 
+            low_vram=args.low_vram, 
+            nseqs=args.nseqs, 
+            nseqs_full=args.nseqs_full, 
+            mapfile=args.mapfile, 
+            ffdb=ffdb)
+    else:
+        pred.predict(
+            inputs=args.inputs, 
+            out_prefix=args.prefix, 
+            symm=args.symm, 
+            n_recycles=args.n_recycles, 
+            n_models=args.n_models, 
+            subcrop=args.subcrop, 
+            topk=args.topk, 
+            low_vram=args.low_vram, 
+            nseqs=args.nseqs, 
+            nseqs_full=args.nseqs_full,
+            ffdb=ffdb)
 
