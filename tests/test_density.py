@@ -5,10 +5,11 @@ def test_density():
 def test_predict():
     from collections import namedtuple
     import torch
-    from network.predict import get_args, read_index, read_data, Predictor
+    from network.predict import read_index, read_data, Predictor
     import os
     import argparse
 
+    torch.backends.cuda.preferred_linalg_library(backend="magma")
     default_model = os.path.dirname(__file__)+"/weights/RF2_jan24.pt"
     parser = argparse.ArgumentParser(description="RoseTTAFold2NA")
     parser.add_argument("-inputs", help="R|Input data in format A:B:C, with\n"

@@ -362,10 +362,7 @@ class Recycling(nn.Module):
         if (not self.training and stride>0):
             STRIDE = stride
 
-        self.norm_state.weight = nn.Parameter(self.norm_state.weight.to(torch.float32)) # TODO: hack to avoid layer norm
-        # precision issues. will not work for training
-        self.norm_state.bias = nn.Parameter(self.norm_state.bias.to(torch.float32))
-        state = self.norm_state(state.to(torch.float32)).to(torch.float16)
+        state = self.norm_state(state)
 
         if STRIDE<L:
             for i in range((L-1)//STRIDE+1):
@@ -376,13 +373,8 @@ class Recycling(nn.Module):
                 pair_i = pair[:,rows]
                 pair[:,rows] = self.norm_pair(pair_i).to(dtype)
         else:
-            # TODO: layer norm precision hack. see above
-            self.norm_msa.weight = nn.Parameter(self.norm_msa.weight.to(torch.float32))
-            self.norm_msa.bias = nn.Parameter(self.norm_msa.bias.to(torch.float32))
-            self.norm_pair.weight = nn.Parameter(self.norm_pair.weight.to(torch.float32))
-            self.norm_pair.bias = nn.Parameter(self.norm_pair.bias.to(torch.float32))
-            msa = self.norm_msa(msa.to(torch.float32)).to(dtype)
-            pair = self.norm_pair(pair.to(torch.float32)).to(dtype)
+            msa = self.norm_msa(msa).to(dtype)
+            pair = self.norm_pair(pair).to(dtype)
 
         ## SYMM
         left = state.to(dtype).unsqueeze(2).expand(-1,-1,L,-1)

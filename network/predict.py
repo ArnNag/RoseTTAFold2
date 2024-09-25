@@ -418,7 +418,7 @@ class Predictor():
         self.model.eval()
 
         for i_trial in range(n_models):
-            # torch.cuda.reset_peak_memory_stats() TODO: this causes an error
+            torch.cuda.reset_peak_memory_stats()
             start_time = time.time()
             self.run_prediction(
                 msa_orig, ins_orig, 
