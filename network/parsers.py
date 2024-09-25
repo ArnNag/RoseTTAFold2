@@ -4,11 +4,11 @@ import scipy.spatial
 import string
 import os,re
 import random
-import util
+import network.util
 import gzip
 import torch
-from ffindex import *
-from chemical import INIT_CRDS
+from network.ffindex import *
+from network.chemical import INIT_CRDS
 
 to1letter = {
     "ALA":'A', "ARG":'R', "ASN":'N', "ASP":'D', "CYS":'C',

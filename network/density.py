@@ -1,6 +1,6 @@
 import os
 import torch
-import util
+from network import util
 import glob
 
 from pyrosetta import *
@@ -84,7 +84,7 @@ def multidock_model(pdbfile,mapfile, counts):
         #os.remove(filename) 
     return pose
 
-def rosetta_density_dock ( preds, mapfile ):
+def rosetta_density_dock( preds, mapfile ):
     for i,(outfile,model,counts) in enumerate(preds):
         model = plddt_trim(model)
         util.writepdb(outfile, model['xyz'], model['seq'], model['Ls'], bfacts=100*model['plddt'])
@@ -98,6 +98,3 @@ def rosetta_density_dock ( preds, mapfile ):
 
     pose.pdb_info(rosetta.core.pose.PDBInfo(pose))
     pose.dump_pdb(pdbfile) # overwrite
-
-
-#rosetta_density_dock('model_00_pred.pdb', 'emd_36027.map')

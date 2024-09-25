@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from torch import einsum
-from util_module import init_lecun_normal
+from network.util_module import init_lecun_normal
 
 
 class FeedForwardLayer(nn.Module):

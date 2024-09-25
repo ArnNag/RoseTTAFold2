@@ -4,29 +4,29 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils import data
-from parsers import parse_a3m, read_templates, read_template_pdb, parse_pdb
-from RoseTTAFoldModel  import RoseTTAFoldModule
-import util
+from network.parsers import parse_a3m, read_templates, read_template_pdb, parse_pdb
+from network.RoseTTAFoldModel  import RoseTTAFoldModule
 from collections import namedtuple
-from ffindex import *
-from featurizing import MSAFeaturize, MSABlockDeletion
-from kinematics import xyz_to_c6d, xyz_to_t2d
-from chemical import INIT_CRDS
-from util_module import XYZConverter
-from symmetry import symm_subunit_matrix, find_symm_subs, get_symm_map
-from data_loader import merge_a3m_hetero
+from network.ffindex import *
+from network.featurizing import MSAFeaturize, MSABlockDeletion
+from network.kinematics import xyz_to_c6d, xyz_to_t2d
+from network.chemical import INIT_CRDS
+from network.util_module import XYZConverter
+from network.symmetry import symm_subunit_matrix, find_symm_subs, get_symm_map
+from network.data_loader import merge_a3m_hetero
+from network import util
 import json
 import random
+import argparse
 
-from loss import calc_rmsd
+from network.loss import calc_rmsd
 
 # suppress dgl warning w/ newest pytorch
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
-def get_args():
+def get_args() -> argparse.Namespace:
     default_model = os.path.dirname(__file__)+"/weights/RF2_jan24.pt"
-
     import argparse
     parser = argparse.ArgumentParser(description="RoseTTAFold2NA")
     parser.add_argument("-inputs", help="R|Input data in format A:B:C, with\n"
@@ -418,7 +418,7 @@ class Predictor():
         self.model.eval()
 
         for i_trial in range(n_models):
-            torch.cuda.reset_peak_memory_stats()
+            # torch.cuda.reset_peak_memory_stats() TODO: this causes an error
             start_time = time.time()
             self.run_prediction(
                 msa_orig, ins_orig, 
@@ -446,14 +446,14 @@ class Predictor():
         self.xyz_converter = self.xyz_converter.cpu()
 
         allpreds = []
-        for i,seq_i in enumerate(inputs):
+        for i,seq_i in enumerate(inputs): # TODO: where are we splitting by spaces?
             symmids,symmRs,symmmeta,symmoffset = symm_subunit_matrix(symm)
             self.xyz_converter = self.xyz_converter.to('cpu')
 
             fseq_i =  seq_i.split(':')
-            a3m_i = fseq_i[0]
+            a3m_i = fseq_i[0] # multiple sequence alignment file
             if (len(fseq_i)>1):
-                count_i = int(fseq_i[1])
+                count_i = int(fseq_i[1])  # hhpred hhr file?
             else:
                 count_i = 1
 
@@ -553,7 +553,7 @@ class Predictor():
         symmids, symmsub, symmRs, symmmeta, L_s, mapfile, 
         n_recycles, nseqs, nseqs_full, subcrop, topk, low_vram, out_prefix,
         msa_mask=0.0,
-    ):
+    ) -> dict:
         self.xyz_converter = self.xyz_converter.to(self.device)
         self.lddt_bins = self.lddt_bins.to(self.device)
 
@@ -723,7 +723,7 @@ class Predictor():
 
 
 if __name__ == "__main__":
-    args = get_args()
+    args: argparse.Namespace = get_args()
 
     if (args.db is not None):
         FFDB = args.db

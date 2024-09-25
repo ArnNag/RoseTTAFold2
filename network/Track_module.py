@@ -3,12 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import einsum
 import torch.utils.checkpoint as checkpoint
-from util import cross_product_matrix
-from util_module import *
-from Attention_module import *
-from SE3_network import SE3TransformerWrapper
-from kinematics import normQ, avgQ, Qs2Rs, Rs2Qs
-from symmetry import get_symm_map
+from network.util import cross_product_matrix
+from network.util_module import *
+from network.Attention_module import *
+from network.SE3_network import SE3TransformerWrapper
+from network.kinematics import normQ, avgQ, Qs2Rs, Rs2Qs
+from network.symmetry import get_symm_map
+from icecream import ic
 
 # Components for three-track blocks
 # 1. MSA -> MSA update (biased attention. bias from pair & structure)
@@ -212,7 +213,10 @@ class PairStr2Pair(nn.Module):
     def forward(self, pair, rbf_feat, state, strides, crop=-1):
         B,L = pair.shape[:2]
 
-        state = self.norm_state(state)
+        # TODO: layer norm precision hack
+        self.norm_state.weight = nn.Parameter(self.norm_state.weight.to(torch.float32))
+        self.norm_state.bias = nn.Parameter(self.norm_state.bias.to(torch.float32))
+        state = self.norm_state(state.to(torch.float32)).to(torch.float16)
         left = self.proj_left(state)
         right = self.proj_right(state)
 
@@ -240,7 +244,10 @@ class PairStr2Pair(nn.Module):
                     rbf_feat_out[:,rows[:,None],cols[None,:]] = (rbf_feat_i*gate_ij).to(rbf_feat.dtype)
             rbf_feat = rbf_feat_out
         else:
-            rbf_feat = self.emb_rbf(rbf_feat)
+            ic(rbf_feat.dtype)
+            ic(self.emb_rbf.bias.dtype)
+            ic(self.emb_rbf.weight.dtype)
+            rbf_feat = self.emb_rbf(rbf_feat.to(torch.float16))
             state = self.norm_state(state)
             left = self.proj_left(state)
             right = self.proj_right(state)

@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch import einsum
-from chemical import aa2num
-from util import rigid_from_3_points
-from kinematics import get_dih
-from scoring import HbHybType
+from network.chemical import aa2num
+from network.util import rigid_from_3_points
+from network.kinematics import get_dih
+from network.scoring import HbHybType
 
 # Loss functions for the training
 # 1. BB rmsd loss

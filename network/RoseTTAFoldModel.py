@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-from Embeddings import MSA_emb, Extra_emb, Templ_emb, Recycling
-from Track_module import IterativeSimulator
-from AuxiliaryPredictor import DistanceNetwork, MaskedTokenNetwork, ExpResolvedNetwork, LDDTNetwork, PAENetwork, BinderNetwork
-from util import INIT_CRDS
+from network.Embeddings import MSA_emb, Extra_emb, Templ_emb, Recycling
+from network.Track_module import IterativeSimulator
+from network.AuxiliaryPredictor import DistanceNetwork, MaskedTokenNetwork, ExpResolvedNetwork, LDDTNetwork, PAENetwork, BinderNetwork
+from network.util import INIT_CRDS
 from torch import einsum
 
 #from pytorch_memlab import LineProfiler, profile

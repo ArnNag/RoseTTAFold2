@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import einsum
 import copy
 import dgl
-from util import *
+from network.util import *
 
 def init_lecun_normal(module, scale=1.0):
     def truncated_normal(uniform, mu=0.0, sigma=1.0, a=-2, b=2):

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
-from chemical import INIT_CRDS
-from util import get_Cb
+from network.chemical import INIT_CRDS
+from network.util import get_Cb
 
 PARAMS = {
     "DMIN"    : 2.0,
