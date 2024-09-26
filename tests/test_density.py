@@ -40,16 +40,20 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 def test_density():
-    from network.density import rosetta_density_dock
+    from network.density import rosetta_density_dock, params
     L = 5
     MAX_NUM_ATOMS_PER_RESIDUE = 27
     NUM_EUCLIDEAN_DIMS = 3
+    MAX_AMINO_ACID_IDX = 10
+    plddt_example_min = params["PLDDT_CUT"] - 0.1  # most of the residues in our example will remain, but not all
+
+
     Ls = [L] # lengths of proteins? TODO: what would it mean to have multiple values here? what are the implications
     # for the other fields?
-    pae = torch.ones((L, L))
-    plddt = torch.ones(L)
-    seq = torch.ones(L, dtype=torch.int64)
-    xyz = torch.ones((L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
+    pae = torch.rand((L, L))
+    plddt = plddt_example_min + (1 - plddt_example_min) * torch.rand(L)  # prevent all residues from being filtered out
+    seq = torch.randint(0, MAX_AMINO_ACID_IDX, (L, ))
+    xyz = torch.rand((L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
     model = {
         'Ls': Ls,
         'pae': pae,
