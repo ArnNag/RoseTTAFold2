@@ -542,8 +542,8 @@ class Predictor():
                     bestmodel = model_i
             allpreds.append( ("%s_%02d_%02d_pred.pdb"%(out_prefix, i, i_trial), bestmodel,count_i) )
 
-        from density import rosetta_density_dock
-        rosetta_density_dock(allpreds, mapfile)
+        from network.density import rosetta_density_dock
+        rosetta_density_dock("%s_%02d_%02d_pred_density_fit.pdb"%(out_prefix, i, i_trial), allpreds, mapfile)
 
 
     def run_prediction(

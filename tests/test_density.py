@@ -1,5 +1,6 @@
 import argparse
 import os
+from icecream import ic
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -49,12 +50,7 @@ def test_predict():
     parser: argparse.ArgumentParser = get_parser()
     args: argparse.Namespace = parser.parse_args(['-inputs', 'test.a3m'])
 
-    if (torch.cuda.is_available()):
-        print ("Running on GPU")
-        pred = Predictor(args.model, torch.device("cuda:0"))
-    else:
-        print ("Running on CPU")
-        pred = Predictor(args.model, torch.device("cpu"))
+    pred = Predictor(args.model, torch.device("cuda:0"))
 
     pred.predict(
         inputs=args.inputs,
@@ -67,5 +63,33 @@ def test_predict():
         low_vram=args.low_vram,
         nseqs=args.nseqs,
         nseqs_full=args.nseqs_full,
+        ffdb=None
+    )
+
+
+def test_predict_with_density():
+    import torch
+    from network.predict import Predictor
+
+    torch.backends.cuda.preferred_linalg_library(backend="magma")  # avoid issue with cuSOLVER when computing SVD
+    parser: argparse.ArgumentParser = get_parser()
+    args: argparse.Namespace = parser.parse_args(['-inputs', 'test.a3m'])
+
+    pred = Predictor(args.model, torch.device("cuda:0"))
+
+    mapfile_path = "emd_36027.map"
+
+    pred.predict_w_dens(
+        inputs=args.inputs,
+        out_prefix=args.prefix,
+        symm=args.symm,
+        n_recycles=args.n_recycles,
+        n_models=args.n_models,
+        subcrop=args.subcrop,
+        topk=args.topk,
+        low_vram=args.low_vram,
+        nseqs=args.nseqs,
+        nseqs_full=args.nseqs_full,
+        mapfile=mapfile_path,
         ffdb=None
     )

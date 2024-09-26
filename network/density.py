@@ -84,7 +84,7 @@ def multidock_model(pdbfile,mapfile, counts):
         #os.remove(filename) 
     return pose
 
-def rosetta_density_dock( preds, mapfile ):
+def rosetta_density_dock(pdbfile, preds, mapfile ):
     for i,(outfile,model,counts) in enumerate(preds):
         model = plddt_trim(model)
         util.writepdb(outfile, model['xyz'], model['seq'], model['Ls'], bfacts=100*model['plddt'])
