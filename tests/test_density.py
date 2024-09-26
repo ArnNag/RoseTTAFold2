@@ -1,5 +1,6 @@
 import argparse
 import os
+import torch
 from icecream import ic
 
 
@@ -40,7 +41,32 @@ def get_parser() -> argparse.ArgumentParser:
 
 def test_density():
     from network.density import rosetta_density_dock
-    rosetta_density_dock('model_00_pred.pdb', 'emd_36027.map')
+    L = 5
+    MAX_NUM_ATOMS_PER_RESIDUE = 27
+    NUM_EUCLIDEAN_DIMS = 3
+    Ls = [L] # lengths of proteins? TODO: what would it mean to have multiple values here? what are the implications
+    # for the other fields?
+    pae = torch.ones((L, L))
+    plddt = torch.ones(L)
+    seq = torch.ones(L, dtype=torch.int64)
+    xyz = torch.ones((L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
+    model = {
+        'Ls': Ls,
+        'pae': pae,
+        'seq': seq,
+        'xyz': xyz,
+        'plddt': plddt,
+    }
+    outfile = "S_00_00_pred.pdb"
+    counts = 1
+    pred = (outfile, model, counts)
+    preds = [pred]
+    rosetta_density_dock('S_00_pred.pdb',  preds, 'emd_36027.map')
+
+
+def test_pose_from_file():
+    from pyrosetta import pose_from_file
+    pose_from_file('S_00_pred.pdb')
 
 def test_predict():
     import torch
