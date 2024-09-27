@@ -56,11 +56,11 @@ def test_density():
     seq = torch.randint(0, MAX_AMINO_ACID_IDX, (L, ))
     xyz = torch.rand((L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
     model = {
-        'Ls': L_s,
-        'pae': pae,
-        'seq': seq,
         'xyz': xyz,
+        'Ls': L_s,
+        'seq': seq,
         'plddt': plddt,
+        'pae': pae,
     }
     outfile = "S_00_00_pred.pdb"
     counts = 1

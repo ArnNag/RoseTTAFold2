@@ -439,6 +439,8 @@ class Predictor():
         n_recycles=4, n_models=1, subcrop=-1, topk=-1, low_vram=False, nseqs=256, nseqs_full=2048,
         n_templ=4, msa_mask=0.0, is_training=False, msa_concat_mode="diag"
     ):
+        if symm != "C1" and mapfile is not None:
+            raise NotImplementedError("Not implemented for using a mapfile with non-C1 symmetry")
         def to_ranges(txt):
             return [[int(x) for x in r.strip().split('-')]
                     for r in txt.strip().split(',')]
@@ -532,7 +534,7 @@ class Predictor():
                     msa_orig, ins_orig, 
                     t1d, xyz_t, alpha_t, mask_t_2d, 
                     xyz_prev, mask_prev, same_chain, idx_pdb,
-                    symmids, symmsub, symmRs, symmmeta,  Ls_i, None, 
+                    symmids, symmsub, symmRs, symmmeta,  Ls_i, mapfile,
                     n_recycles, nseqs, nseqs_full, subcrop, topk, low_vram,
                     "%s_%02d_%02d"%(out_prefix, i, i_trial),
                     msa_mask=msa_mask
@@ -656,6 +658,16 @@ class Predictor():
                     pred_lddt, logits_pae, logit_s = None, None, None
                     continue
 
+                from network.density import rosetta_density_dock
+                pre_density_fit_model = {
+                    'xyz': xyz_prev[0],
+                    'Ls': L_s,
+                    'seq': seq[0],
+                    'plddt': pred_lddt[0],
+                    'pae': logits_pae[0],
+                }
+                pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO what is counts?
+                rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile)
                 best_xyz = xyz_prev
                 best_logit = logit_s
                 best_lddt = pred_lddt.half().cpu()
