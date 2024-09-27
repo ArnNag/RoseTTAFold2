@@ -3,7 +3,7 @@ import torch
 from network import util
 import glob
 
-from pyrosetta import *
+from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init
 init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
 
 params = {
@@ -11,7 +11,7 @@ params = {
     "MIN_RES_CUT": 3, # do not keep segments shorter than this
 }
 
-def setup_docking_mover(counts):
+def setup_docking_mover(counts) -> rosetta.protocols.electron_density.DockFragmentsIntoDensityMover:
     dock_into_dens = rosetta.protocols.electron_density.DockFragmentsIntoDensityMover()
     dock_into_dens.setB( 16 )
     dock_into_dens.setGridStep( 1 )
@@ -29,7 +29,7 @@ def setup_docking_mover(counts):
     return dock_into_dens
 
 def rosetta_density_relax(posein):
-    scorefxn = get_fa_scorefxn()
+    scorefxn: rosetta.core.scoring.ScoreFunction = get_fa_scorefxn()
     scorefxn.set_weight( rosetta.core.scoring.elec_dens_fast, 50 )
     scorefxn.set_weight( rosetta.core.scoring.cart_bonded, 0.5 )
     scorefxn.set_weight( rosetta.core.scoring.cart_bonded_angle, 1.0 )
@@ -67,10 +67,10 @@ def plddt_trim(model):
         'pae': pae,
     }
 
-def multidock_model(pdbfile,mapfile, counts):
-    pose = pose_from_pdb(pdbfile)
+def multidock_model(pdbfile,mapfile, counts) -> rosetta.core.pose.Pose:
+    pose: rosetta.core.pose.Pose = pose_from_pdb(pdbfile)
     rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-    dock_into_dens = setup_docking_mover(counts)
+    dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts)
     dock_into_dens.apply(pose)
 
     # grab top 'count' poses
