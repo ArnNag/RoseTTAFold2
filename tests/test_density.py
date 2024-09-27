@@ -3,6 +3,11 @@ import os
 import torch
 from icecream import ic
 
+L = 5
+MAX_NUM_ATOMS_PER_RESIDUE = 27
+NUM_EUCLIDEAN_DIMS = 3
+MAX_AMINO_ACID_IDX = 10  # there are more amino acids than this but it works for the test
+
 
 def get_parser() -> argparse.ArgumentParser:
     """
@@ -41,21 +46,17 @@ def get_parser() -> argparse.ArgumentParser:
 
 def test_density():
     from network.density import rosetta_density_dock, params
-    L = 5
-    MAX_NUM_ATOMS_PER_RESIDUE = 27
-    NUM_EUCLIDEAN_DIMS = 3
-    MAX_AMINO_ACID_IDX = 10
     plddt_example_min = params["PLDDT_CUT"] - 0.1  # most of the residues in our example will remain, but not all
 
 
-    Ls = [L] # lengths of proteins? TODO: what would it mean to have multiple values here? what are the implications
+    L_s = [L] # lengths of proteins? TODO: what would it mean to have multiple values here? what are the implications
     # for the other fields?
     pae = torch.rand((L, L))
     plddt = plddt_example_min + (1 - plddt_example_min) * torch.rand(L)  # prevent all residues from being filtered out
     seq = torch.randint(0, MAX_AMINO_ACID_IDX, (L, ))
     xyz = torch.rand((L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
     model = {
-        'Ls': Ls,
+        'Ls': L_s,
         'pae': pae,
         'seq': seq,
         'xyz': xyz,
@@ -123,3 +124,49 @@ def test_predict_with_density():
         mapfile=mapfile_path,
         ffdb=None
     )
+
+def test_c1_domain_duplication_is_noop():
+
+    from network.symmetry import symm_subunit_matrix, find_symm_subs
+    from network.chemical import INIT_CRDS
+
+    B = 1
+    best_xyz = torch.rand((B, L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
+    best_lddt = torch.rand((B, L))
+    seq = torch.randint(0, MAX_AMINO_ACID_IDX, (B, L))
+
+    symmids, symmRs, symmmeta, symmoffset = symm_subunit_matrix("C1")
+    O = symmids.shape[0]
+    n_templ = 4
+    SYMM_OFFSET_SCALE = 1.0
+
+    xyz_t = (
+            INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
+            + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
+            + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
+    )
+    # template features
+    maxtmpl = 1
+    xyz_t = xyz_t[:maxtmpl].float().unsqueeze(0)
+    xyz_prev = xyz_t[:, 0]
+    xyz_prev, symmsub = find_symm_subs(xyz_prev[:, :L], symmRs, symmmeta)
+    Osub = symmsub.shape[0]
+    Lasu = L // Osub
+
+    best_xyz = best_xyz.float().cpu()
+    symmRs = symmRs.cpu()
+    best_xyzfull = torch.zeros((B, O * Lasu, 27, 3))
+    best_xyzfull[:, :Lasu] = best_xyz[:, :Lasu]
+    seq_full = torch.zeros((B, O * Lasu), dtype=seq.dtype)
+    seq_full[:, :Lasu] = seq[:, :Lasu]
+    best_lddtfull = torch.zeros((B, O * Lasu))
+    best_lddtfull[:, :Lasu] = best_lddt[:, :Lasu]
+    for i in range(1, O):
+        best_xyzfull[:, (i * Lasu):((i + 1) * Lasu)] = torch.einsum('ij,braj->brai', symmRs[i], best_xyz[:, :Lasu])
+        seq_full[:, (i * Lasu):((i + 1) * Lasu)] = seq[:, :Lasu]
+        best_lddtfull[:, (i * Lasu):((i + 1) * Lasu)] = best_lddt[:, :Lasu]
+
+    assert torch.equal(best_xyz, best_xyzfull)
+    assert torch.equal(best_lddt, best_lddtfull)
+    assert torch.equal(seq, seq_full)
+
