@@ -666,8 +666,8 @@ class Predictor():
                     'plddt': pred_lddt[0],
                     'pae': logits_pae[0],
                 }
-                pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO what is counts?
-                rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile)
+                pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO: what is counts (currently hardcoded to 1)
+                rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile) # TODO: what if there are multiple elements in the preds argument?
                 best_xyz = xyz_prev
                 best_logit = logit_s
                 best_lddt = pred_lddt.half().cpu()
