@@ -46,7 +46,7 @@ def get_parser() -> argparse.ArgumentParser:
 
 def test_density():
     from network.density import rosetta_density_dock, params
-    plddt_example_min = params["PLDDT_CUT"] - 0.1  # most of the residues in our example will remain, but not all
+    plddt_example_min = params["PLDDT_CUT"]  # lower this if we want to test pLDDT fitting
 
 
     L_s = [L] # lengths of proteins? TODO: what would it mean to have multiple values here? what are the implications
