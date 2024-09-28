@@ -30,15 +30,15 @@ def setup_docking_mover(counts) -> rosetta.protocols.electron_density.DockFragme
 
 def rosetta_density_relax(posein):
     scorefxn: rosetta.core.scoring.ScoreFunction = get_fa_scorefxn()
-    # scorefxn.set_weight( rosetta.core.scoring.elec_dens_fast, 50 )
+    scorefxn.set_weight( rosetta.core.scoring.elec_dens_fast, 50 )
     scorefxn.set_weight( rosetta.core.scoring.cart_bonded, 0.5 )
     scorefxn.set_weight( rosetta.core.scoring.cart_bonded_angle, 1.0 )
     scorefxn.set_weight( rosetta.core.scoring.pro_close, 0.0 )
-    # setup = rosetta.protocols.electron_density.SetupForDensityScoringMover()
+    setup = rosetta.protocols.electron_density.SetupForDensityScoringMover()
     relax = rosetta.protocols.relax.FastRelax(scorefxn,1)
     relax.cartesian(True)
     relax.max_iter(100)
-    # setup.apply(posein)
+    setup.apply(posein)
     relax.apply(posein)
 
 def plddt_trim(model):
@@ -70,7 +70,7 @@ def plddt_trim(model):
 def multidock_model(pdbfile,mapfile, counts) -> rosetta.core.pose.Pose:
     pose: rosetta.core.pose.Pose = pose_from_pdb(pdbfile)
     # rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-    # dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts)
+    dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts)
     # dock_into_dens.apply(pose)
 
     # grab top 'count' poses
@@ -94,7 +94,7 @@ def rosetta_density_dock(pdbfile, preds, mapfile ):
         else:
             pose.append_pose_by_jump( pose_i, 1 )
 
-    rosetta_density_relax(pose)
+    # rosetta_density_relax(pose)
 
     pose.pdb_info(rosetta.core.pose.PDBInfo(pose))
     pose.dump_pdb(pdbfile) # overwrite
