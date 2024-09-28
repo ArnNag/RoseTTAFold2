@@ -649,6 +649,20 @@ class Predictor():
                 pred_lddt = pred_lddt.sum(dim=1)
                 logits_pae = pae_unbin(logits_pae.half())
 
+                from network.density import rosetta_density_dock
+                pre_density_fit_model = {
+                    'xyz': xyz_prev[0],
+                    'Ls': L_s,
+                    'seq': seq[0],
+                    'plddt': pred_lddt[0],
+                    'pae': logits_pae[0],
+                }
+                
+                pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO what is counts?
+                rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile)
+
+                # TODO: load result of density fitting into xyz_prev
+                
                 rmsd,_,_,_ = calc_rmsd(xyz_prev_prev[None].float(), xyz_prev.float(), torch.ones((1,L,27),dtype=torch.bool))
 
                 print (f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f} rmsd {rmsd[0]:.3f}")
@@ -658,16 +672,6 @@ class Predictor():
                     pred_lddt, logits_pae, logit_s = None, None, None
                     continue
 
-                from network.density import rosetta_density_dock
-                pre_density_fit_model = {
-                    'xyz': xyz_prev[0],
-                    'Ls': L_s,
-                    'seq': seq[0],
-                    'plddt': pred_lddt[0],
-                    'pae': logits_pae[0],
-                }
-                pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO what is counts?
-                rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile)
                 best_xyz = xyz_prev
                 best_logit = logit_s
                 best_lddt = pred_lddt.half().cpu()
