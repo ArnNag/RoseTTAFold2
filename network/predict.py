@@ -660,12 +660,8 @@ class Predictor():
 
                 pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO what is counts (currently hardcoded to 1)?
                 rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile) # TODO: what if there are multiple elements in the pred argument?
-                del pre_density_fit_pred
-                del pre_density_fit_model
-                del xyz_prev
 
                 # TODO: load result of density fitting into xyz_prev
-                # xyz_after_density_fit = . . . 
 
                 rmsd,_,_,_ = calc_rmsd(xyz_prev_prev[None].float(), xyz_prev.float(), torch.ones((1,L,27),dtype=torch.bool))
 
