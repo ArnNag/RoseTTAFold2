@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils import data
-from network.parsers import parse_a3m, read_templates, read_template_pdb, parse_pdb
+from network.parsers import parse_a3m, read_templates, read_template_pdb, parse_pdb_w_seq
 from network.RoseTTAFoldModel  import RoseTTAFoldModule
 from collections import namedtuple
 from network.ffindex import *
@@ -658,10 +658,12 @@ class Predictor():
                     'pae': logits_pae[0],
                 }
 
+                print(f"{xyz_prev_prev.shape=}")
                 pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO what is counts (currently hardcoded to 1)?
                 rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile) # TODO: what if there are multiple elements in the pred argument?
 
                 # TODO: load result of density fitting into xyz_prev
+                xyz_prev = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
 
                 rmsd,_,_,_ = calc_rmsd(xyz_prev_prev[None].float(), xyz_prev.float(), torch.ones((1,L,27),dtype=torch.bool))
 
@@ -772,7 +774,7 @@ if __name__ == "__main__":
             ffdb=ffdb)
     else:
         pred.predict(
-            inputs=args.inputs, 
+            inputs=args.inputs,
             out_prefix=args.prefix, 
             symm=args.symm, 
             n_recycles=args.n_recycles, 

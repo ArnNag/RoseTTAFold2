@@ -4,11 +4,12 @@ import scipy.spatial
 import string
 import os,re
 import random
-import network.util
+from network import util
 import gzip
 import torch
 from network.ffindex import *
 from network.chemical import INIT_CRDS
+from icecream import ic
 
 to1letter = {
     "ALA":'A', "ARG":'R', "ASN":'N', "ASP":'D', "CYS":'C',
@@ -114,6 +115,8 @@ def parse_pdb(filename):
 
 #'''
 def parse_pdb_lines(lines):
+    ic(util.aa2long)
+    ic(util.aa2num)
 
     # indices of residues observed in the structure
     idx_s = [int(l[22:26]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
@@ -127,6 +130,13 @@ def parse_pdb_lines(lines):
         idx = idx_s.index(resNo)
         for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]]):
             if tgtatm == atom:
+                ic(tgtatm)
+                ic(i_atm)
+                ic(atom)
+                ic(xyz.shape)
+                ic(aa)
+                ic(util.aa2num[aa])
+                ic(len(util.aa2long[util.aa2num[aa]]))
                 xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
                 break
 

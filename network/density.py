@@ -69,7 +69,7 @@ def plddt_trim(model):
 
 def multidock_model(pdbfile,mapfile, counts) -> rosetta.core.pose.Pose:
     pose: rosetta.core.pose.Pose = pose_from_pdb(pdbfile)
-    # rosetta.core.scoring.electron_density.getDensityMap(mapfile)
+    rosetta.core.scoring.electron_density.getDensityMap(mapfile)
     dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts)
     dock_into_dens.apply(pose)
 

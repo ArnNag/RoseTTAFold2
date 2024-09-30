@@ -46,7 +46,7 @@ def get_parser() -> argparse.ArgumentParser:
 
 def test_density():
     from network.density import rosetta_density_dock, params
-    plddt_example_min = params["PLDDT_CUT"]  # lower this if we want to test pLDDT fitting
+    plddt_example_min = params["PLDDT_CUT"]  # most of the residues in our example will remain, but not all
 
 
     L_s = [L] # lengths of proteins? TODO: what would it mean to have multiple values here? what are the implications
@@ -169,4 +169,13 @@ def test_c1_domain_duplication_is_noop():
     assert torch.equal(best_xyz, best_xyzfull)
     assert torch.equal(best_lddt, best_lddtfull)
     assert torch.equal(seq, seq_full)
+
+def test_parse_second_intermediate_pdb():
+    from network.parsers import parse_pdb_w_seq
+    xyz_first_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
+    xyz_second_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
+    ic(xyz_first_intermediate.shape)
+    ic(xyz_second_intermediate.shape)
+
+    # TODO: first axis is 72 here but 100 for xyz_prev_prev??
 
