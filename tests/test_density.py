@@ -1,5 +1,7 @@
 import argparse
 import os
+
+import pytest
 import torch
 from icecream import ic
 
@@ -48,12 +50,10 @@ def test_density():
     from network.density import rosetta_density_dock, params
     plddt_example_min = params["PLDDT_CUT"]  # most of the residues in our example will remain, but not all
 
-
-    L_s = [L] # lengths of proteins? TODO: what would it mean to have multiple values here? what are the implications
-    # for the other fields?
+    L_s = [L]  # lengths of chains TODO: what happens to pae and xyz dims if there are multiple chains
     pae = torch.rand((L, L))
     plddt = plddt_example_min + (1 - plddt_example_min) * torch.rand(L)  # prevent all residues from being filtered out
-    seq = torch.randint(0, MAX_AMINO_ACID_IDX, (L, ))
+    seq = torch.randint(0, MAX_AMINO_ACID_IDX, (L,))
     xyz = torch.rand((L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
     model = {
         'xyz': xyz,
@@ -62,16 +62,14 @@ def test_density():
         'plddt': plddt,
         'pae': pae,
     }
-    outfile = "S_00_00_pred.pdb"
     counts = 1
-    pred = (outfile, model, counts)
-    preds = [pred]
-    rosetta_density_dock('S_00_pred.pdb',  preds, 'emd_36027.map')
+    rosetta_density_dock('test_density_first.pdb', 'test_density_second.pdb', model, counts, 'emd_36027.map')
 
 
 def test_pose_from_file():
     from pyrosetta import pose_from_file
     pose_from_file('S_00_pred.pdb')
+
 
 def test_predict():
     import torch
@@ -98,13 +96,17 @@ def test_predict():
     )
 
 
-def test_predict_with_density():
+@pytest.mark.parametrize("args_list", [['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5'],
+                                       # ['-inputs', 'a3m/test.a3m', 'a3m/test.a3m'],
+                                       # ['-inputs', 'a3m/test_two_chains.a3m']
+                                       ])
+def test_predict_with_density(args_list):
     import torch
     from network.predict import Predictor
 
     torch.backends.cuda.preferred_linalg_library(backend="magma")  # avoid issue with cuSOLVER when computing SVD
     parser: argparse.ArgumentParser = get_parser()
-    args: argparse.Namespace = parser.parse_args(['-inputs', 'test.a3m'])
+    args: argparse.Namespace = parser.parse_args(args_list)
 
     pred = Predictor(args.model, torch.device("cuda:0"))
 
@@ -125,8 +127,8 @@ def test_predict_with_density():
         ffdb=None
     )
 
-def test_c1_domain_duplication_is_noop():
 
+def test_c1_domain_duplication_is_noop():
     from network.symmetry import symm_subunit_matrix, find_symm_subs
     from network.chemical import INIT_CRDS
 
@@ -170,12 +172,12 @@ def test_c1_domain_duplication_is_noop():
     assert torch.equal(best_lddt, best_lddtfull)
     assert torch.equal(seq, seq_full)
 
+
 def test_parse_second_intermediate_pdb():
     from network.parsers import parse_pdb_w_seq
-    xyz_first_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
+    xyz_first_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_first_intermediate.pdb")[0])
     xyz_second_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
     ic(xyz_first_intermediate.shape)
     ic(xyz_second_intermediate.shape)
 
     # TODO: first axis is 72 here but 100 for xyz_prev_prev??
-

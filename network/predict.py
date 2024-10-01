@@ -3,6 +3,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
+from icecream import ic
 from torch.utils import data
 from network.parsers import parse_a3m, read_templates, read_template_pdb, parse_pdb_w_seq
 from network.RoseTTAFoldModel  import RoseTTAFoldModule
@@ -448,7 +449,7 @@ class Predictor():
         self.xyz_converter = self.xyz_converter.cpu()
 
         allpreds = []
-        for i,seq_i in enumerate(inputs): # TODO: where are we splitting by spaces?
+        for i,seq_i in enumerate(inputs):
             symmids,symmRs,symmmeta,symmoffset = symm_subunit_matrix(symm)
             self.xyz_converter = self.xyz_converter.to('cpu')
 
@@ -540,12 +541,9 @@ class Predictor():
                     msa_mask=msa_mask
                 )
                 torch.cuda.empty_cache()
-                if (bestmodel is None or torch.mean(bestmodel['plddt']) < torch.mean(retval['plddt']) ):
+                if (bestmodel is None or torch.mean(bestmodel['plddt']) < torch.mean(model_i['plddt'])):
                     bestmodel = model_i
             allpreds.append( ("%s_%02d_%02d_pred.pdb"%(out_prefix, i, i_trial), bestmodel,count_i) )
-
-        from network.density import rosetta_density_dock
-        rosetta_density_dock("%s_%02d_%02d_pred_density_fit.pdb"%(out_prefix, i, i_trial), allpreds, mapfile)
 
 
     def run_prediction(
@@ -649,7 +647,6 @@ class Predictor():
                 pred_lddt = pred_lddt.sum(dim=1)
                 logits_pae = pae_unbin(logits_pae.half())
 
-                from network.density import rosetta_density_dock
                 pre_density_fit_model = {
                     'xyz': xyz_prev[0],
                     'Ls': L_s,
@@ -658,12 +655,12 @@ class Predictor():
                     'pae': logits_pae[0],
                 }
 
-                print(f"{xyz_prev_prev.shape=}")
-                pre_density_fit_pred = ("density_fit_first_intermediate.pdb", pre_density_fit_model, 1) # TODO what is counts (currently hardcoded to 1)?
-                rosetta_density_dock("density_fit_second_intermediate.pdb", [pre_density_fit_pred], mapfile) # TODO: what if there are multiple elements in the pred argument?
+                from network.density import rosetta_density_dock
+                rosetta_density_dock(outfile="density_fit_first_intermediate.pdb", pdbfile="density_fit_second_intermediate.pdb", model=pre_density_fit_model, counts=1, mapfile=mapfile)
+                # TODO: what is counts (currently hardcoded to 1)?
 
-                # TODO: load result of density fitting into xyz_prev
-                xyz_prev = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
+                xyz_prev = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0]).to(xyz_prev_prev.device).unsqueeze(0)
+                # TODO: better way to deal with batch axis than unssqueeze?
 
                 rmsd,_,_,_ = calc_rmsd(xyz_prev_prev[None].float(), xyz_prev.float(), torch.ones((1,L,27),dtype=torch.bool))
 

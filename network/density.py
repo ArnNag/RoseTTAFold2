@@ -1,5 +1,7 @@
 import os
 import torch
+from icecream import ic
+
 from network import util
 import glob
 
@@ -27,19 +29,6 @@ def setup_docking_mover(counts) -> rosetta.protocols.electron_density.DockFragme
     dock_into_dens.setConvoluteSingleR( False )
     dock_into_dens.setLaplacianOffset( 0 )
     return dock_into_dens
-
-def rosetta_density_relax(posein):
-    scorefxn: rosetta.core.scoring.ScoreFunction = get_fa_scorefxn()
-    scorefxn.set_weight( rosetta.core.scoring.elec_dens_fast, 50 )
-    scorefxn.set_weight( rosetta.core.scoring.cart_bonded, 0.5 )
-    scorefxn.set_weight( rosetta.core.scoring.cart_bonded_angle, 1.0 )
-    scorefxn.set_weight( rosetta.core.scoring.pro_close, 0.0 )
-    setup = rosetta.protocols.electron_density.SetupForDensityScoringMover()
-    relax = rosetta.protocols.relax.FastRelax(scorefxn,1)
-    relax.cartesian(True)
-    relax.max_iter(100)
-    setup.apply(posein)
-    relax.apply(posein)
 
 def plddt_trim(model):
     # trim low plddts
@@ -84,17 +73,11 @@ def multidock_model(pdbfile,mapfile, counts) -> rosetta.core.pose.Pose:
         #os.remove(filename) 
     return pose
 
-def rosetta_density_dock(pdbfile, preds, mapfile ):
-    for i,(outfile,model,counts) in enumerate(preds):
-        model = plddt_trim(model)
-        util.writepdb(outfile, model['xyz'], model['seq'], model['Ls'], bfacts=100*model['plddt'])
-        pose_i = multidock_model(outfile, mapfile, counts)
-        if i==0:
-            pose = pose_i
-        else:
-            pose.append_pose_by_jump( pose_i, 1 )
-
-    # rosetta_density_relax(pose)
+def rosetta_density_dock(outfile, pdbfile, model, counts, mapfile):
+    # model = plddt_trim(model)
+    ic(model)
+    util.writepdb(outfile, model['xyz'], model['seq'], model['Ls'], bfacts=100*model['plddt'])
+    pose: rosetta.core.pose.Pose = multidock_model(outfile, mapfile, counts)
 
     pose.pdb_info(rosetta.core.pose.PDBInfo(pose))
     pose.dump_pdb(pdbfile) # overwrite
