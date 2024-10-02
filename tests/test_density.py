@@ -96,10 +96,12 @@ def test_predict():
     )
 
 
-@pytest.mark.parametrize("args_list", [['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5'],
-                                       # ['-inputs', 'a3m/test.a3m', 'a3m/test.a3m'],
-                                       # ['-inputs', 'a3m/test_two_chains.a3m']
-                                       ])
+@pytest.mark.parametrize("args_list", [
+                                        ['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5'],
+                                        # ['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'],
+                                        # ['-inputs', 'a3m/test.a3m', 'a3m/test.a3m'],
+                                        # ['-inputs', 'a3m/test_two_chains.a3m']
+                                      ])
 def test_predict_with_density(args_list):
     import torch
     from network.predict import Predictor
@@ -175,6 +177,7 @@ def test_c1_domain_duplication_is_noop():
 
 def test_parse_second_intermediate_pdb():
     from network.parsers import parse_pdb_w_seq
+    test_predict_with_density( ['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'])
     xyz_first_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_first_intermediate.pdb")[0])
     xyz_second_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
     ic(xyz_first_intermediate.shape)

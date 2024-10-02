@@ -647,7 +647,7 @@ class Predictor():
                 pred_lddt = pred_lddt.sum(dim=1)
                 logits_pae = pae_unbin(logits_pae.half())
 
-                pre_density_fit_model = {
+                before_dock_model = {
                     'xyz': xyz_prev[0],
                     'Ls': L_s,
                     'seq': seq[0],
@@ -656,18 +656,21 @@ class Predictor():
                 }
 
                 from network.density import rosetta_density_dock
-                rosetta_density_dock(outfile="density_fit_first_intermediate.pdb", pdbfile="density_fit_second_intermediate.pdb", model=pre_density_fit_model, counts=1, mapfile=mapfile)
+                after_dock_file = f"after_dock_cycle_{i_cycle}.pdb"
+                rosetta_density_dock(before_dock_file=f"before_dock_cycle_{i_cycle}.pdb", after_dock_file=after_dock_file, model=before_dock_model, counts=1, mapfile=mapfile)
                 # TODO: what is counts (currently hardcoded to 1)?
 
-                xyz_prev = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0]).to(xyz_prev_prev.device).unsqueeze(0)
-                # TODO: better way to deal with batch axis than unssqueeze?
+                xyz_prev = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_prev_prev.device).unsqueeze(0)
+                # TODO: better way to deal with batch axis than unsqueeze?
 
-                rmsd,_,_,_ = calc_rmsd(xyz_prev_prev[None].float(), xyz_prev.float(), torch.ones((1,L,27),dtype=torch.bool))
+                rmsd,_,_,_ = calc_rmsd(pred=xyz_prev_prev[None].float(), true=xyz_prev.float(), mask=torch.ones((1,L,27),dtype=torch.bool))
+                # TODO: what is the point of the new singleton dimension (N) in xyz_prev_prev[None]?
 
                 print (f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f} rmsd {rmsd[0]:.3f}")
 
                 torch.cuda.empty_cache()
                 if pred_lddt.mean() < best_lddt.mean():
+                    # TODO: are B-factors modified during the docking process? should we use these instead of pLDDT?
                     pred_lddt, logits_pae, logit_s = None, None, None
                     continue
 
@@ -727,7 +730,7 @@ class Predictor():
 
         # return prediction
         retval = {
-            'xyz': best_xyzfull[0],
+            'xyz': best_xyzfull[0], # TODO: why the singleton batch dimension?
             'Ls': L_s,
             'seq': seq_full[0],
             'plddt': best_lddtfull[0],
