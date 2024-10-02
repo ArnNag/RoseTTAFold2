@@ -97,7 +97,7 @@ def test_predict():
 
 
 @pytest.mark.parametrize("args_list", [
-                                        ['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5'],
+                                        ['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5', '-mapfile', 'emd_27094.map'],
                                         # ['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'],
                                         # ['-inputs', 'a3m/test.a3m', 'a3m/test.a3m'],
                                         # ['-inputs', 'a3m/test_two_chains.a3m']
@@ -112,8 +112,6 @@ def test_predict_with_density(args_list):
 
     pred = Predictor(args.model, torch.device("cuda:0"))
 
-    mapfile_path = "emd_36027.map"
-
     pred.predict_w_dens(
         inputs=args.inputs,
         out_prefix=args.prefix,
@@ -125,7 +123,7 @@ def test_predict_with_density(args_list):
         low_vram=args.low_vram,
         nseqs=args.nseqs,
         nseqs_full=args.nseqs_full,
-        mapfile=mapfile_path,
+        mapfile=args.mapfile,
         ffdb=None
     )
 
