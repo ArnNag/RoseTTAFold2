@@ -181,3 +181,11 @@ def test_parse_second_intermediate_pdb():
     ic(xyz_second_intermediate.shape)
 
     # TODO: first axis is 72 here but 100 for xyz_prev_prev??
+
+
+def test_multidock():
+    from network.density import multidock_model
+    import rosetta
+    pose: rosetta.core.pose.Pose = multidock_model("input.pdb", "emd_27094.map", 1)
+    pose.pdb_info(rosetta.core.pose.PDBInfo(pose))
+    pose.dump_pdb("output_fit_to_map.pdb")
