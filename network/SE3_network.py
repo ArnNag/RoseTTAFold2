@@ -78,9 +78,9 @@ class SE3TransformerWrapper(nn.Module):
     @torch.cuda.amp.autocast(enabled=False)
     def forward(self, G, type_0_features, type_1_features=None, edge_features=None):
         if self.l1_in > 0:
-            node_features = {'0': type_0_features, '1': type_1_features}
+            node_features = {'0': type_0_features.float(), '1': type_1_features.float()}
         else:
-            node_features = {'0': type_0_features}
-        edge_features = {'0': edge_features}
+            node_features = {'0': type_0_features.float()}
+        edge_features = {'0': edge_features.float()}
 
         return self.se3(G, node_features, edge_features)
