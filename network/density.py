@@ -79,7 +79,7 @@ def multidock_model(pdbfile, mapfile, counts) -> rosetta.core.pose.Pose:
 
 
 def rosetta_density_dock(before_dock_file, after_dock_file, model, counts, mapfile):
-    # model = plddt_trim(model)
+    model = plddt_trim(model)
     util.writepdb(before_dock_file, model['xyz'], model['seq'], model['Ls'], bfacts=100 * model['plddt'])
     pose: rosetta.core.pose.Pose = multidock_model(before_dock_file, mapfile, counts)
     pose.pdb_info(rosetta.core.pose.PDBInfo(pose))

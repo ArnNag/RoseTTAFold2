@@ -664,10 +664,10 @@ class Predictor():
                     xyz_prev = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_prev_prev.device).unsqueeze(0)
                     # TODO: better way to deal with batch axis than unsqueeze?
 
-                rmsd,_,_,_ = calc_rmsd(pred=xyz_prev_prev[None].float(), true=xyz_prev.float(), mask=torch.ones((1,L,27),dtype=torch.bool))
+                # rmsd,_,_,_ = calc_rmsd(pred=xyz_prev_prev[None].float(), true=xyz_prev.float(), mask=torch.ones((1,L,27),dtype=torch.bool))
                 # TODO: what is the point of the new singleton dimension (N) in xyz_prev_prev[None]?
 
-                print (f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f} rmsd {rmsd[0]:.3f}")
+                print (f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f} rmsd: TODO")
 
                 torch.cuda.empty_cache()
                 if pred_lddt.mean() < best_lddt.mean():
