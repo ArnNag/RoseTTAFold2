@@ -97,7 +97,8 @@ def test_predict():
 
 
 @pytest.mark.parametrize("args_list", [
-                                        ['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5', '-mapfile', 'emd_27094.map'],
+                                        ['-inputs', 'a3m/8C2C_full.a3m', '-mapfile', 'emd_27094.map'],
+                                        # ['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5', '-mapfile', 'emd_27094.map'],
                                         # ['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'],
                                         # ['-inputs', 'a3m/test.a3m', 'a3m/test.a3m'],
                                         # ['-inputs', 'a3m/test_two_chains.a3m']
