@@ -77,7 +77,7 @@ def test_predict():
 
     torch.backends.cuda.preferred_linalg_library(backend="magma")  # avoid issue with cuSOLVER when computing SVD
     parser: argparse.ArgumentParser = get_parser()
-    args: argparse.Namespace = parser.parse_args(['-inputs', 'test.a3m'])
+    args: argparse.Namespace = parser.parse_args(['-inputs', 'a3m/test.a3m', '-n_recycles', '2', '-topk', '5'])
 
     pred = Predictor(args.model, torch.device("cuda:0"))
 
