@@ -7,6 +7,8 @@ import glob
 
 from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init
 
+from network.parsers import parse_pdb_w_seq
+
 init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
 
 params = {
@@ -57,6 +59,7 @@ def plddt_trim(model):
         'seq': seq,
         'plddt': plddt,
         'pae': pae,
+        'plddt_mask': plddt_mask,
     }
 
 
@@ -79,8 +82,13 @@ def multidock_model(pdbfile, mapfile, counts) -> rosetta.core.pose.Pose:
 
 
 def rosetta_density_dock(before_dock_file, after_dock_file, model, counts, mapfile):
-    model = plddt_trim(model)
-    util.writepdb(before_dock_file, model['xyz'], model['seq'], model['Ls'], bfacts=100 * model['plddt'])
+    trimmed_model = plddt_trim(model)
+    util.writepdb(before_dock_file, trimmed_model['xyz'], trimmed_model['seq'], trimmed_model['Ls'], bfacts=100 * trimmed_model['plddt'])
     pose: rosetta.core.pose.Pose = multidock_model(before_dock_file, mapfile, counts)
     pose.pdb_info(rosetta.core.pose.PDBInfo(pose))
     pose.dump_pdb(after_dock_file)
+    xyz_with_dummy = torch.full_like(model['xyz'], torch.nan)
+    xyz_with_dummy[trimmed_model['plddt_mask']] = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_with_dummy).unsqueeze(0)
+    # TODO: better way to deal with batch axis than unsqueeze?
+
+    return xyz_with_dummy, trimmed_model['plddt_mask']

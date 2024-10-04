@@ -655,14 +655,12 @@ class Predictor():
                         'plddt': pred_lddt[0],
                         'pae': logits_pae[0],
                     }
+                    after_dock_file = f"after_dock_cycle_{i_cycle}.pdb"
 
                     from network.density import rosetta_density_dock
-                    after_dock_file = f"after_dock_cycle_{i_cycle}.pdb"
-                    rosetta_density_dock(before_dock_file=f"before_dock_cycle_{i_cycle}.pdb", after_dock_file=after_dock_file, model=before_dock_model, counts=1, mapfile=mapfile)
+                    xyz_prev, mask_t_next = rosetta_density_dock(before_dock_file=f"before_dock_cycle_{i_cycle}.pdb", after_dock_file=after_dock_file, model=before_dock_model, counts=1, mapfile=mapfile)
                     # TODO: what is counts (currently hardcoded to 1)?
 
-                    xyz_prev = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_prev_prev.device).unsqueeze(0)
-                    # TODO: better way to deal with batch axis than unsqueeze?
 
                 # rmsd,_,_,_ = calc_rmsd(pred=xyz_prev_prev[None].float(), true=xyz_prev.float(), mask=torch.ones((1,L,27),dtype=torch.bool))
                 # TODO: what is the point of the new singleton dimension (N) in xyz_prev_prev[None]?
