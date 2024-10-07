@@ -38,6 +38,8 @@ def setup_docking_mover(counts) -> rosetta.protocols.electron_density.DockFragme
 def plddt_trim(model):
     # trim low plddts
     plddt_mask = model['plddt'] > params['PLDDT_CUT']
+    if torch.all(torch.logical_not(plddt_mask)):
+        raise ValueError(f"All predicted pLDDT values were below the cutoff threshold. Lowest pLDDT: {torch.min(torch.nan_to_num(model['plddt'], nan=1e14))}. pLDDT cutoff: {params['PLDDT_CUT']}")
     # remove singletons
     mask, idx, ct = torch.torch.unique_consecutive(plddt_mask, dim=0, return_counts=True, return_inverse=True)
     mask = mask * ct >= params['MIN_RES_CUT']
@@ -87,8 +89,8 @@ def rosetta_density_dock(before_dock_file, after_dock_file, model, counts, mapfi
     pose: rosetta.core.pose.Pose = multidock_model(before_dock_file, mapfile, counts)
     pose.pdb_info(rosetta.core.pose.PDBInfo(pose))
     pose.dump_pdb(after_dock_file)
-    xyz_with_dummy = torch.full_like(model['xyz'], torch.nan)
-    xyz_with_dummy[trimmed_model['plddt_mask']] = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_with_dummy).unsqueeze(0)
+    xyz_with_dummy = torch.full_like(model['xyz'], torch.nan).unsqueeze(0)
     # TODO: better way to deal with batch axis than unsqueeze?
+    xyz_with_dummy[0][trimmed_model['plddt_mask']] = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_with_dummy)
 
     return xyz_with_dummy, trimmed_model['plddt_mask']

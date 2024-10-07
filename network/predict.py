@@ -658,7 +658,7 @@ class Predictor():
                     after_dock_file = f"after_dock_cycle_{i_cycle}.pdb"
 
                     from network.density import rosetta_density_dock
-                    xyz_prev, mask_t_next = rosetta_density_dock(before_dock_file=f"before_dock_cycle_{i_cycle}.pdb", after_dock_file=after_dock_file, model=before_dock_model, counts=1, mapfile=mapfile)
+                    xyz_prev, mask_recycle = rosetta_density_dock(before_dock_file=f"before_dock_cycle_{i_cycle}.pdb", after_dock_file=after_dock_file, model=before_dock_model, counts=1, mapfile=mapfile)
                     # TODO: what is counts (currently hardcoded to 1)?
 
 

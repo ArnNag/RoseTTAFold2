@@ -107,6 +107,7 @@ def test_predict_with_density(args_list):
     import torch
     from network.predict import Predictor
 
+    torch.manual_seed(1738)
     torch.backends.cuda.preferred_linalg_library(backend="magma")  # avoid issue with cuSOLVER when computing SVD
     parser: argparse.ArgumentParser = get_parser()
     args: argparse.Namespace = parser.parse_args(args_list)

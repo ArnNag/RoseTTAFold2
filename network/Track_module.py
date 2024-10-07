@@ -684,7 +684,7 @@ class IterBlock(nn.Module):
 
             R, T, state, alpha = self.str2str(
                 msa, pair, R_in, T_in, xyz, state, idx, strides, top_k=topk
-            ) 
+            )
 
         # update contacting subunits
         # symmetrize pair features
