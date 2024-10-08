@@ -76,7 +76,6 @@ class MSAPairStr2MSA(nn.Module):
             - msa: MSA feature (B, N, L, d_msa)
             - pair: Pair feature (B, L, L, d_pair)
             - rbf_feat: Ca-Ca distance feature calculated from xyz coordinates (B, L, L, d_rbf)
-            - xyz: xyz coordinates (B, L, n_atom, 3)
             - state: updated node features after SE(3)-Transformer layer (B, L, d_state)
         Output:
             - msa: Updated MSA feature (B, N, L, d_msa)
@@ -570,6 +569,7 @@ class Str2Str(nn.Module):
                     pair_ij = self.norm_pair( pair[:,rows[:,None],cols[None,:]] )
                     rbf_feat_ij = rbf(torch.cdist(xyz[:,rows,1], xyz[:,cols,1])).reshape(B,NR,NC,-1)
                     rbf_feat_ij = torch.cat((rbf_feat_ij, seqsep[:,rows[:,None],cols[None,:]]), dim=-1)
+                    rbf_feat_ij = torch.nan_to_num(rbf_feat_ij)
                     edge_ij = self.embed_edge1(pair_ij) + self.embed_edge2(rbf_feat_ij)
                     edge_ij += self.ff_edge(edge_ij,stride_ff_s2s)
                     edge[:,rows[:,None],cols[None,:]] = self.norm_edge(edge_ij).to(msa.dtype)
@@ -662,6 +662,8 @@ class IterBlock(nn.Module):
                   + self.pos(idx[:,rows],idx[:,cols], B)
                 ).to(rbf_feat.dtype)
                 rbf_feat[:,rows[:,None],cols[None,:]] = rbf_feat_ij
+
+        rbf_feat = torch.nan_to_num(rbf_feat)  # TODO: better way to do this by incorporating mask_prev?
 
         if use_checkpoint:
             msa = checkpoint.checkpoint(create_custom_forward(self.msa2msa), msa, pair, rbf_feat, state, strides, use_reentrant=True)

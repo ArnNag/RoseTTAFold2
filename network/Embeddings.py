@@ -395,7 +395,7 @@ class Recycling(nn.Module):
             dist_CB = rbf( torch.cdist( Cb, Cb ) ).to(dtype)
 
         if mask_recycle != None:
-            dist_CB = mask_recycle[...,None].to(dtype)*dist_CB
+            dist_CB = torch.where(mask_recycle[...,None].to(torch.bool), dist_CB, torch.scalar_tensor(1e10)) # TODO: do we want a big or small number here?
 
         dist_CB = torch.cat((dist_CB, left, right), dim=-1)
 

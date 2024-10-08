@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-
-from icecream import ic
 from torch import einsum
 from network.util_module import init_lecun_normal
 
@@ -272,12 +270,8 @@ class MSARowAttentionWithBias(nn.Module):
             query = query * seq_weight.expand(-1, -1, -1, -1, self.dim)
             key = key * self.scaling
             attn = einsum('bsqhd,bskhd->bqkh', query, key)
-            ic()
-            ic(torch.all(torch.isnan(attn)))
             attn = attn + bias
             attn = F.softmax(attn, dim=-2)
-            ic()
-            ic(torch.all(torch.isnan(attn)))
 
             out = einsum('bqkh,bskhd->bsqhd', attn, value).reshape(B, N, L, -1)
             out = gate * out
