@@ -660,6 +660,9 @@ class Predictor():
                     from network.density import rosetta_density_dock
                     xyz_prev, mask_recycle = rosetta_density_dock(before_dock_file=f"before_dock_cycle_{i_cycle}.pdb", after_dock_file=after_dock_file, model=before_dock_model, counts=1, mapfile=mapfile)
                     # TODO: what is counts (currently hardcoded to 1)?
+                    mask_recycle = mask_recycle[None, :, None] * mask_recycle[None, None, :]  # (B, L, L)
+                    mask_recycle = same_chain.float() * mask_recycle.float()
+                    # TODO: check that we actually have to apply same_chain again
 
 
                 # rmsd,_,_,_ = calc_rmsd(pred=xyz_prev_prev[None].float(), true=xyz_prev.float(), mask=torch.ones((1,L,27),dtype=torch.bool))
