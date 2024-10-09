@@ -8,16 +8,16 @@ import torch
 import torch.nn as nn
 from torch.utils import data
 from functools import partial
-from data_loader import (
+from network.data_loader import (
     get_train_valid_set, loader_pdb, loader_fb, loader_complex,
     Dataset, DatasetComplex, DistilledDataset, DistributedWeightedSampler
 )
-from kinematics import xyz_to_c6d, c6d_to_bins, xyz_to_t2d, xyz_to_bbtor
-from RoseTTAFoldModel  import RoseTTAFoldModule
-from loss import *
-from util import *
-from util_module import XYZConverter
-from scheduler import get_linear_schedule_with_warmup, get_stepwise_decay_schedule_with_warmup
+from network.kinematics import xyz_to_c6d, c6d_to_bins, xyz_to_t2d, xyz_to_bbtor
+from network.RoseTTAFoldModel  import RoseTTAFoldModule
+from network.loss import *
+from network.util import *
+from network.util_module import XYZConverter
+from network.scheduler import get_linear_schedule_with_warmup, get_stepwise_decay_schedule_with_warmup
 
 # distributed data parallel
 import torch.distributed as dist
@@ -47,7 +47,7 @@ LOAD_PARAM = {'shuffle': False,
               'num_workers': 3,
               'pin_memory': True}
 
-from arguments import get_args
+from network.arguments import get_args
 args, model_param, loader_param, loss_param = get_args()
 
 

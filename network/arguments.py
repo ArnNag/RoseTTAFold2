@@ -1,5 +1,5 @@
 import argparse
-import data_loader
+import network.data_loader
 import os
 
 TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
