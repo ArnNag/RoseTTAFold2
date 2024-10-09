@@ -760,6 +760,7 @@ if __name__ == "__main__":
         pred = Predictor(args.model, torch.device("cpu"))
 
     if args.mapfile is not None and args.mapfile != "None":
+        print("Predicting with density")
         pred.predict_w_dens(
             inputs=args.inputs, 
             out_prefix=args.prefix, 
