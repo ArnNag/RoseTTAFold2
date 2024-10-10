@@ -64,6 +64,54 @@ def plddt_trim(model):
         'plddt_mask': plddt_mask,
     }
 
+def domains_from_pae_matrix_igraph(pae_matrix, pae_power=1, pae_cutoff=5, graph_resolution=1):
+    '''
+    Takes a predicted aligned error (PAE) matrix representing the predicted error in distances between each 
+    pair of residues in a model, and uses a graph-based community clustering algorithm to partition the model
+    into approximately rigid groups.
+
+    Arguments:
+
+        * pae_matrix: a (n_residues x n_residues) numpy array. Diagonal elements should be set to some non-zero
+          value to avoid divide-by-zero warnings
+        * pae_power (optional, default=1): each edge in the graph will be weighted proportional to (1/pae**pae_power)
+        * pae_cutoff (optional, default=5): graph edges will only be created for residue pairs with pae<pae_cutoff
+        * graph_resolution (optional, default=1): regulates how aggressively the clustering algorithm is. Smaller values
+          lead to larger clusters. Value should be larger than zero, and values larger than 5 are unlikely to be useful.
+
+    Returns: a series of lists, where each list contains the indices of residues belonging to one cluster.
+    '''
+    try:
+        import igraph
+    except ImportError:
+        print('ERROR: This method requires python-igraph to be installed. Please install it using "pip install python-igraph" '
+            'in a Python >=3.6 environment and try again.')
+        import sys
+        sys.exit()
+    import numpy
+    weights = 1/pae_matrix**pae_power
+
+    g = igraph.Graph()
+    size = weights.shape[0]
+    g.add_vertices(range(size))
+    edges = numpy.argwhere(pae_matrix < pae_cutoff)
+    ic(edges)
+    if len(edges) == 0:
+        raise ValueError("All pAE values were below the pae_cutoff threshold.")
+    sel_weights = weights[edges.T[0], edges.T[1]]
+    g.add_edges(list(zip(edges.T[0], edges.T[1])))
+    g.es['weight'] = list(sel_weights)
+
+    vc = g.community_leiden(weights='weight', resolution_parameter=graph_resolution/100, n_iterations=-1)
+    membership = numpy.array(vc.membership)
+    from collections import defaultdict
+    clusters = defaultdict(list)
+    for i, c in enumerate(membership):
+        clusters[c].append(i)
+    clusters = list(sorted(clusters.values(), key=lambda l:(len(l)), reverse=True))
+    return clusters
+
+
 
 def multidock_model(pdbfile, mapfile, counts) -> rosetta.core.pose.Pose:
     pose: rosetta.core.pose.Pose = pose_from_pdb(pdbfile)
@@ -84,6 +132,9 @@ def multidock_model(pdbfile, mapfile, counts) -> rosetta.core.pose.Pose:
 
 
 def rosetta_density_dock(before_dock_file, after_dock_file, model, counts, mapfile):
+    clusters = domains_from_pae_matrix_igraph(model["pae"].cpu(), pae_cutoff=100, graph_resolution=0.005)
+    ic(clusters)
+    ic(model["pae"])
     trimmed_model = plddt_trim(model)
     ic(trimmed_model["plddt_mask"])
     util.writepdb(before_dock_file, trimmed_model['xyz'], trimmed_model['seq'], trimmed_model['Ls'], bfacts=100 * trimmed_model['plddt'])
