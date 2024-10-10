@@ -233,6 +233,7 @@ def make_topk_graph(xyz, pair, idx, top_k=128, kmin=32, eps=1e-6):
 
     # distance map from current CA coordinates
     D = torch.cdist(xyz, xyz) + torch.eye(L, device=device).unsqueeze(0)*999.9  # (B, L, L)
+    D = torch.nan_to_num(D, nan=torch.finfo(xyz.dtype).max)  # TODO: do this using the mask
     # seq sep
     sep = idx[:,None,:] - idx[:,:,None]
     sep = sep.abs() + torch.eye(L, device=device).unsqueeze(0)*999.9

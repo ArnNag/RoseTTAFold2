@@ -576,6 +576,7 @@ class Str2Str(nn.Module):
         else:
             pair = self.norm_pair(pair)
             rbf_feat = rbf(torch.cdist(xyz[:,:,1], xyz[:,:,1])).reshape(B,L,L,-1)
+            rbf_feat = torch.nan_to_num(rbf_feat) # TODO: do this with the mask
             rbf_feat = torch.cat((rbf_feat, seqsep), dim=-1)
             edge = self.embed_edge1(pair) + self.embed_edge2(rbf_feat)
             edge = edge + self.ff_edge(edge)
@@ -791,6 +792,7 @@ class IterativeSimulator(nn.Module):
                 strides, symmids, symmsub_in, symmsub, symmRs, symmmeta,
                 use_checkpoint=use_checkpoint, crop=p2p_crop, topk=topk_crop,
                 low_vram=low_vram)
+
 
             R_s.append(R_in)
             T_s.append(T_in)
