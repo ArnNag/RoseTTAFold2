@@ -5,7 +5,7 @@ from icecream import ic
 from network import util
 import glob
 
-from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init
+from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init, Pose
 
 from network.parsers import parse_pdb_w_seq
 
@@ -113,27 +113,25 @@ def domains_from_pae_matrix_igraph(pae_matrix, pae_power=1, pae_cutoff=5, graph_
 
 
 
-def multidock_model(pdbfile, mapfile, counts) -> rosetta.core.pose.Pose:
-    pose: rosetta.core.pose.Pose = pose_from_pdb(pdbfile)
+def multidock_model(allfiles: list[str], mapfile) -> rosetta.core.pose.Pose:
     rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-    dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts)
-    dock_into_dens.apply(pose)
+    dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts=1)
+    
+    all_poses: Pose = Pose()
+    for filename in allfiles:
+        pose_before_fit: Pose = pose_from_pdb(filename)
+        # os.remove(filename) 
+        dock_into_dens.apply(pose_before_fit)
+        pose_after_fit: Pose = pose_from_pdb("EMPTY_JOB_use_jd2_000001.pdb")
+        all_poses.append_pose_by_jump(pose_after_fit, 1)
 
-    # grab top 'count' poses
-    allfiles = glob.glob('EMPTY_JOB_use_jd2_*.pdb')
-    allfiles.sort()
-    for i, filename in enumerate(allfiles):
-        if i == 0:
-            pose = pose_from_pdb(filename)
-        elif i < counts:
-            pose.append_pose_by_jump(pose_from_pdb(filename), 1)
-        #os.remove(filename) 
-    return pose
+    return all_poses
 
 
 def rosetta_density_dock(before_dock_file, after_dock_file, model, counts, mapfile):
     clusters = domains_from_pae_matrix_igraph(model["pae"].cpu(), pae_cutoff=100, graph_resolution=0.005)
     ic(clusters)
+    # TODO: split model into clusters and pass into multidock model
     ic(model["pae"])
     trimmed_model = plddt_trim(model)
     ic(trimmed_model["plddt_mask"])
