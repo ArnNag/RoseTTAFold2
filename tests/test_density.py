@@ -192,3 +192,41 @@ def test_multidock():
     pose: rosetta.core.pose.Pose = multidock_model("input.pdb", "emd_27094.map", 1)
     pose.pdb_info(rosetta.core.pose.PDBInfo(pose))
     pose.dump_pdb("output_fit_to_map.pdb")
+
+
+def test_center_and_realign_missing():
+    from network.util import center_and_realign_missing
+    L = 1
+    xyz = torch.rand(L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    mask_t = torch.bernoulli(torch.full((L, MAX_NUM_ATOMS_PER_RESIDUE), 0.5))
+    result = center_and_realign_missing(xyz, mask_t)
+    assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    ic(torch.all(torch.eq(xyz, result), dim=2))
+    assert torch.equal(torch.all(torch.eq(xyz, result), dim=2), mask_t)
+    ic(xyz)
+    ic(mask_t)
+    ic(result)
+
+def test_predict_globin_w_rotated_template():
+    import torch
+    from network.predict import Predictor
+
+    torch.backends.cuda.preferred_linalg_library(backend="magma")  # avoid issue with cuSOLVER when computing SVD
+    parser: argparse.ArgumentParser = get_parser()
+    args: argparse.Namespace = parser.parse_args(['-inputs', 'a3m/myoglobin.a3m', '-n_recycles', '2'])
+
+    pred = Predictor(args.model, torch.device("cuda:0"))
+
+    pred.predict(
+        inputs=args.inputs,
+        out_prefix=args.prefix,
+        symm=args.symm,
+        n_recycles=args.n_recycles,
+        n_models=args.n_models,
+        subcrop=args.subcrop,
+        topk=args.topk,
+        low_vram=args.low_vram,
+        nseqs=args.nseqs,
+        nseqs_full=args.nseqs_full,
+        ffdb=None
+    )
