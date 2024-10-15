@@ -348,12 +348,15 @@ def test_predict_globin_w_rotated_template():
         B = 1
         #
         t1d = t1d.to(pred.device).half()
-        t2d = xyz_to_t2d(xyz_t, mask_t).half()
+        ic()
+        ic(xyz_t.shape)
+        ic(mask_t.shape)
+        t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
         if not low_vram:
             t2d = t2d.to(pred.device)  # .half()
         idx_pdb = idx_pdb.to(pred.device)
         xyz_t = xyz_t[:, :, :, 1].to(pred.device)
-        mask_t = mask_t.to(pred.device)
+        mask_t_2d = mask_t_2d.to(pred.device)
         alpha_t = alpha_t.to(pred.device)
         xyz_prev = xyz_prev.to(pred.device)
         mask_prev = mask_prev.to(pred.device)
@@ -399,7 +402,7 @@ def test_predict_globin_w_rotated_template():
                     seq, xyz_prev,
                     idx_pdb,
                     t1d=t1d, t2d=t2d, xyz_t=xyz_t,
-                    alpha_t=alpha_t, mask_t=mask_t,
+                    alpha_t=alpha_t, mask_t=mask_t_2d,
                     same_chain=same_chain,
                     msa_prev=msa_prev,
                     pair_prev=pair_prev,
@@ -496,13 +499,4 @@ def test_predict_globin_w_rotated_template():
         'plddt': best_lddtfull[0],
         'pae': best_pae[0],
     }
-
-    results = pred.run_prediction(
-        msa_orig, ins_orig,
-        t1d, xyz_t, alpha_t, mask_t_2d,
-        xyz_prev, mask_prev, same_chain, idx_pdb,
-        symmids, symmsub, symmRs, symmmeta, Ls, None,
-        n_recycles, nseqs, nseqs_full, subcrop, topk, low_vram,
-        out_prefix,
-    )
 

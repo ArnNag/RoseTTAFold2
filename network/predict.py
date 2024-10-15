@@ -572,6 +572,9 @@ class Predictor():
             B = 1
             #
             t1d = t1d.to(self.device).half()
+            ic()
+            ic(xyz_t.shape)
+            ic(mask_t.shape)
             t2d = xyz_to_t2d(xyz_t, mask_t).half()
             if not low_vram:
                 t2d = t2d.to(self.device) #.half()
