@@ -209,24 +209,128 @@ def test_center_and_realign_missing():
 
 def test_predict_globin_w_rotated_template():
     import torch
-    from network.predict import Predictor
+    from network.predict import Predictor, merge_a3m_homo
+    from network.symmetry import symm_subunit_matrix
+    from network.chemical import INIT_CRDS
 
     torch.backends.cuda.preferred_linalg_library(backend="magma")  # avoid issue with cuSOLVER when computing SVD
-    parser: argparse.ArgumentParser = get_parser()
-    args: argparse.Namespace = parser.parse_args(['-inputs', 'a3m/myoglobin.a3m', '-n_recycles', '2'])
 
-    pred = Predictor(args.model, torch.device("cuda:0"))
+    model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
+    pred = Predictor(model, torch.device("cuda:0"))
+    symm = "C1"
+    nseqs_full = 2048
+    n_templ = 1
+    n_recycles = 2
+    nseqs = 256
+    subcrop = -1
+    topk = -1
+    low_vram = False
+    msa_concat_mode = "diag"
+    pred.xyz_converter = pred.xyz_converter.cpu()
+    out_prefix = "test_predict_globin_w_rotated_template"
 
-    pred.predict(
-        inputs=args.inputs,
-        out_prefix=args.prefix,
-        symm=args.symm,
-        n_recycles=args.n_recycles,
-        n_models=args.n_models,
-        subcrop=args.subcrop,
-        topk=args.topk,
-        low_vram=args.low_vram,
-        nseqs=args.nseqs,
-        nseqs_full=args.nseqs_full,
-        ffdb=None
+    ###
+    # pass 1, combined MSA
+    Ls_blocked, Ls, msas, inss = [], [], [], []
+
+    a3m_i = "a3m/myoglobin.a3m"
+    from network.parsers import parse_a3m
+    msa_i, ins_i, Ls_i = parse_a3m(a3m_i)
+    msa_i = torch.tensor(msa_i).long()
+    ins_i = torch.tensor(ins_i).long()
+    msas.append(msa_i)
+    inss.append(ins_i)
+    Ls.extend(Ls_i)
+    Ls_blocked.append(msa_i.shape[1])
+
+    msa_orig = {'msa': msas[0], 'ins': inss[0]}
+    for i in range(1, len(Ls_blocked)):
+        from network.data_loader import merge_a3m_hetero
+        msa_orig = merge_a3m_hetero(msa_orig, {'msa': msas[i], 'ins': inss[i]}, [sum(Ls_blocked[:i]), Ls_blocked[i]])
+    msa_orig, ins_orig = msa_orig['msa'], msa_orig['ins']
+
+    symmids, symmRs, symmmeta, symmoffset = symm_subunit_matrix(symm)
+
+    ###
+    # pass 2, templates
+    L = sum(Ls)
+    # xyz_t = INIT_CRDS.reshape(1,1,27,3).repeat(n_templ,L,1,1) + torch.rand(n_templ,L,1,3)*5.0 - 2.5
+    # dummy template
+    SYMM_OFFSET_SCALE = 1.0
+    xyz_t = (
+            INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
+            + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
+            + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
+    )
+
+    mask_t = torch.full((n_templ, L, 27), False)
+    t1d = torch.nn.functional.one_hot(torch.full((n_templ, L), 20).long(), num_classes=21).float()  # all gaps
+    t1d = torch.cat((t1d, torch.zeros((n_templ, L, 1)).float()), -1)
+
+    maxtmpl = 1
+
+    same_chain = torch.zeros((1, L, L), dtype=torch.bool, device=xyz_t.device)
+    stopres = 0
+    for i in range(1, len(Ls)):
+        startres, stopres = sum(Ls[:(i - 1)]), sum(Ls[:i])
+        same_chain[:, startres:stopres, startres:stopres] = True
+    same_chain[:, stopres:, stopres:] = True
+
+    # template features
+    xyz_t = xyz_t[:maxtmpl].float().unsqueeze(0)
+    mask_t = mask_t[:maxtmpl].unsqueeze(0)
+    t1d = t1d[:maxtmpl].float().unsqueeze(0)
+
+    seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
+    alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(xyz_t.reshape(-1, L, 27, 3), seq_tmp,
+                                                              mask_in=mask_t.reshape(-1, L, 27))
+    alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
+
+    alpha[torch.isnan(alpha)] = 0.0
+    alpha = alpha.reshape(1, -1, L, 10, 2)
+    alpha_mask = alpha_mask.reshape(1, -1, L, 10, 1)
+    alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
+
+    ###
+    # pass 3, symmetry
+    xyz_prev = xyz_t[:, 0]
+    from network.symmetry import find_symm_subs
+    xyz_prev, symmsub = find_symm_subs(xyz_prev[:, :L], symmRs, symmmeta)
+
+    Osub = symmsub.shape[0]
+    mask_t = mask_t.repeat(1, 1, Osub, 1)
+    alpha_t = alpha_t.repeat(1, 1, Osub, 1)
+    mask_prev = mask_t[:, 0]
+    xyz_t = xyz_t.repeat(1, 1, Osub, 1, 1)
+    t1d = t1d.repeat(1, 1, Osub, 1)
+
+    # symmetrize msa
+    if (Osub > 1):
+        msa_orig, ins_orig = merge_a3m_homo(msa_orig, ins_orig, Osub, mode=msa_concat_mode)
+
+    # index
+    idx_pdb = torch.arange(Osub * L)[None, :]
+
+    same_chain = torch.zeros((1, Osub * L, Osub * L)).long()
+    i_start = 0
+    for o_i in range(Osub):
+        for li in Ls:
+            i_stop = i_start + li
+            idx_pdb[:, i_stop:] += 100
+            same_chain[:, i_start:i_stop, i_start:i_stop] = 1
+            i_start = i_stop
+
+    mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
+    mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
+    mask_t_2d = mask_t_2d.float() * same_chain.float()[:, None]  # (ignore inter-chain region)
+
+    pred.model.eval()
+
+    pred.run_prediction(
+        msa_orig, ins_orig,
+        t1d, xyz_t, alpha_t, mask_t_2d,
+        xyz_prev, mask_prev, same_chain, idx_pdb,
+        symmids, symmsub, symmRs, symmmeta, Ls, None,
+        n_recycles, nseqs, nseqs_full, subcrop, topk, low_vram,
+        out_prefix,
     )
