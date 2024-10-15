@@ -183,7 +183,6 @@ def test_parse_second_intermediate_pdb():
     ic(xyz_first_intermediate.shape)
     ic(xyz_second_intermediate.shape)
 
-    # TODO: first axis is 72 here but 100 for xyz_prev_prev??
 
 
 def test_multidock():
@@ -208,8 +207,11 @@ def test_center_and_realign_missing():
     ic(result)
 
 
-@pytest.mark.parametrize("use_template", [True])
-def test_predict_globin_w_rotated_template(use_template):
+@pytest.mark.parametrize(("use_template", "use_xyz_prev"), [
+    # (True, True),
+    (False, True)
+])
+def test_predict_globin_w_rotated_template(use_template, use_xyz_prev):
     import torch
     from network.predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
     from network.symmetry import symm_subunit_matrix, find_symm_subs
@@ -261,11 +263,10 @@ def test_predict_globin_w_rotated_template(use_template):
     ###
     # pass 2, templates
     L = sum(Ls)
+    xyz_globin = torch.from_numpy(parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")[0]).unsqueeze(0)
 
     if use_template:
-        xyz_t = torch.from_numpy(parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")[0]).unsqueeze(0)
-        ic()
-        ic(xyz_t.shape)
+        xyz_t = xyz_globin
     else:
         # dummy template
         SYMM_OFFSET_SCALE = 1.0
@@ -274,6 +275,7 @@ def test_predict_globin_w_rotated_template(use_template):
                 + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
                 + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
         )
+
 
     mask_t = torch.full((n_templ, L, 27), False)
     t1d = torch.nn.functional.one_hot(torch.full((n_templ, L), 20).long(), num_classes=21).float()  # all gaps
@@ -294,8 +296,6 @@ def test_predict_globin_w_rotated_template(use_template):
     t1d = t1d[:maxtmpl].float().unsqueeze(0)
 
     seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
-    ic()
-    ic(xyz_t.shape)
     alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(xyz_t.reshape(-1, L, 27, 3), seq_tmp,
                                                               mask_in=mask_t.reshape(-1, L, 27))
     alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
@@ -307,7 +307,11 @@ def test_predict_globin_w_rotated_template(use_template):
 
     ###
     # pass 3, symmetry
-    xyz_prev = xyz_t[:, 0]
+    if use_xyz_prev:
+        xyz_prev = xyz_globin
+    else:
+        xyz_prev = xyz_t[:, 0]
+
     xyz_prev, symmsub = find_symm_subs(xyz_prev[:, :L], symmRs, symmmeta)
 
     Osub = symmsub.shape[0]
@@ -352,9 +356,6 @@ def test_predict_globin_w_rotated_template(use_template):
 
         #
         t1d = t1d.to(pred.device).half()
-        ic()
-        ic(xyz_t.shape)
-        ic(mask_t.shape)
         t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
         if not low_vram:
             t2d = t2d.to(pred.device)  # .half()
