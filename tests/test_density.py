@@ -340,12 +340,7 @@ def test_predict_globin_w_rotated_template():
         ins = ins_orig.long().to(pred.device)
 
         print(f"N={msa.shape[0]} L={msa.shape[1]}")
-        N, L = msa.shape[:2]
-        O = symmids.shape[0]
-        Osub = symmsub.shape[0]
-        Lasu = L // Osub
 
-        B = 1
         #
         t1d = t1d.to(pred.device).half()
         ic()
@@ -452,20 +447,7 @@ def test_predict_globin_w_rotated_template():
             prob = pred.active_fn(logit.to(pred.device).float())  # distogram
             prob_s.append(prob.half().cpu())
 
-    # full complex
     best_xyz = best_xyz.float().cpu()
-    symmRs = symmRs.cpu()
-    best_xyzfull = torch.zeros((B, O * Lasu, 27, 3))
-    best_xyzfull[:, :Lasu] = best_xyz[:, :Lasu]
-    seq_full = torch.zeros((B, O * Lasu), dtype=seq.dtype)
-    seq_full[:, :Lasu] = seq[:, :Lasu]
-    best_lddtfull = torch.zeros((B, O * Lasu))
-    best_lddtfull[:, :Lasu] = best_lddt[:, :Lasu]
-    for i in range(1, O):
-        best_xyzfull[:, (i * Lasu):((i + 1) * Lasu)] = torch.einsum('ij,braj->brai', symmRs[i], best_xyz[:, :Lasu])
-        seq_full[:, (i * Lasu):((i + 1) * Lasu)] = seq[:, :Lasu]
-        best_lddtfull[:, (i * Lasu):((i + 1) * Lasu)] = best_lddt[:, :Lasu]
-
     outdata = {}
 
     # RMS
@@ -483,7 +465,7 @@ def test_predict_globin_w_rotated_template():
         Lstarti += li
 
     outfile = "%s_pred.pdb" % (out_prefix)
-    util.writepdb(outfile, best_xyzfull[0], seq_full[0], Ls, bfacts=100 * best_lddtfull[0])
+    util.writepdb(outfile, best_xyz[0], seq[0], Ls, bfacts=100 * best_lddt[0])
 
     prob_s = [prob.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.float16) for prob in prob_s]
     np.savez_compressed("%s.npz" % (out_prefix),
@@ -493,10 +475,10 @@ def test_predict_globin_w_rotated_template():
 
     # return prediction
     retval = {
-        'xyz': best_xyzfull[0],  # TODO: why the singleton batch dimension?
+        'xyz': best_xyz[0],  # TODO: why the singleton batch dimension?
         'Ls': Ls,
-        'seq': seq_full[0],
-        'plddt': best_lddtfull[0],
+        'seq': seq[0],
+        'plddt': best_lddt[0],
         'pae': best_pae[0],
     }
 
