@@ -97,12 +97,12 @@ def test_predict():
 
 
 @pytest.mark.parametrize("args_list", [
-                                        # ['-inputs', 'a3m/8C2C_full.a3m', '-mapfile', 'emd_27094.map'],
-                                        ['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5', '-mapfile', 'emd_27094.map'],
-                                        # ['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'],
-                                        # ['-inputs', 'a3m/test.a3m', 'a3m/test.a3m'],
-                                        # ['-inputs', 'a3m/test_two_chains.a3m']
-                                      ])
+    # ['-inputs', 'a3m/8C2C_full.a3m', '-mapfile', 'emd_27094.map'],
+    ['-inputs', 'a3m/test.a3m', '-n_recycles', '2', "-topk", '5', '-mapfile', 'emd_27094.map'],
+    # ['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'],
+    # ['-inputs', 'a3m/test.a3m', 'a3m/test.a3m'],
+    # ['-inputs', 'a3m/test_two_chains.a3m']
+])
 def test_predict_with_density(args_list):
     import torch
     from network.predict import Predictor
@@ -177,7 +177,7 @@ def test_c1_domain_duplication_is_noop():
 
 def test_parse_second_intermediate_pdb():
     from network.parsers import parse_pdb_w_seq
-    test_predict_with_density( ['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'])
+    test_predict_with_density(['-inputs', 'a3m/rcsb_pdb_8CZC.a3m', '-n_recycles', '2', "-topk", '5'])
     xyz_first_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_first_intermediate.pdb")[0])
     xyz_second_intermediate = torch.from_numpy(parse_pdb_w_seq("density_fit_second_intermediate.pdb")[0])
     ic(xyz_first_intermediate.shape)
@@ -207,12 +207,14 @@ def test_center_and_realign_missing():
     ic(mask_t)
     ic(result)
 
-def test_predict_globin_w_rotated_template():
+
+@pytest.mark.parametrize("use_template", [True])
+def test_predict_globin_w_rotated_template(use_template):
     import torch
     from network.predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
     from network.symmetry import symm_subunit_matrix, find_symm_subs
     from network.chemical import INIT_CRDS
-    from network.parsers import parse_a3m
+    from network.parsers import parse_a3m, parse_pdb_w_seq
     from network.data_loader import merge_a3m_hetero
     from network.kinematics import xyz_to_t2d
     from network import util
@@ -259,14 +261,19 @@ def test_predict_globin_w_rotated_template():
     ###
     # pass 2, templates
     L = sum(Ls)
-    # xyz_t = INIT_CRDS.reshape(1,1,27,3).repeat(n_templ,L,1,1) + torch.rand(n_templ,L,1,3)*5.0 - 2.5
-    # dummy template
-    SYMM_OFFSET_SCALE = 1.0
-    xyz_t = (
-            INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
-            + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
-            + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
-    )
+
+    if use_template:
+        xyz_t = torch.from_numpy(parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")[0]).unsqueeze(0)
+        ic()
+        ic(xyz_t.shape)
+    else:
+        # dummy template
+        SYMM_OFFSET_SCALE = 1.0
+        xyz_t = (
+                INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
+                + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
+                + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
+        )
 
     mask_t = torch.full((n_templ, L, 27), False)
     t1d = torch.nn.functional.one_hot(torch.full((n_templ, L), 20).long(), num_classes=21).float()  # all gaps
@@ -287,6 +294,8 @@ def test_predict_globin_w_rotated_template():
     t1d = t1d[:maxtmpl].float().unsqueeze(0)
 
     seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
+    ic()
+    ic(xyz_t.shape)
     alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(xyz_t.reshape(-1, L, 27, 3), seq_tmp,
                                                               mask_in=mask_t.reshape(-1, L, 27))
     alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
@@ -481,4 +490,3 @@ def test_predict_globin_w_rotated_template():
         'plddt': best_lddt[0],
         'pae': best_pae[0],
     }
-
