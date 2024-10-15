@@ -197,7 +197,7 @@ def test_center_and_realign_missing():
     from network.util import center_and_realign_missing
     L = 1
     xyz = torch.rand(L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
-    mask_t = torch.bernoulli(torch.full((L, MAX_NUM_ATOMS_PER_RESIDUE), 0.5))
+    mask_t = torch.bernoulli(torch.full((L,), 0.5)).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
     result = center_and_realign_missing(xyz, mask_t)
     assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
     ic(torch.all(torch.eq(xyz, result), dim=2))
