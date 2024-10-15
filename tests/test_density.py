@@ -207,11 +207,13 @@ def test_center_and_realign_missing():
     ic(result)
 
 
-@pytest.mark.parametrize(("use_template", "use_xyz_prev"), [
-    # (True, True),
-    (False, True)
+@pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev"), [
+    (True, False, False, False),
+    # (False, True, False, False),
+    # (False, False, True, False),
+    # (False, False, False, True),
 ])
-def test_predict_globin_w_rotated_template(use_template, use_xyz_prev):
+def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state_prev, use_pair_prev):
     import torch
     from network.predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
     from network.symmetry import symm_subunit_matrix, find_symm_subs
@@ -265,16 +267,13 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev):
     L = sum(Ls)
     xyz_globin = torch.from_numpy(parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")[0]).unsqueeze(0)
 
-    if use_template:
-        xyz_t = xyz_globin
-    else:
-        # dummy template
-        SYMM_OFFSET_SCALE = 1.0
-        xyz_t = (
-                INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
-                + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
-                + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
-        )
+    # dummy template
+    SYMM_OFFSET_SCALE = 1.0
+    xyz_t = (
+            INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
+            + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
+            + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
+    )
 
 
     mask_t = torch.full((n_templ, L, 27), False)
@@ -307,11 +306,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev):
 
     ###
     # pass 3, symmetry
-    if use_xyz_prev:
-        xyz_prev = xyz_globin
-    else:
-        xyz_prev = xyz_t[:, 0]
-
+    xyz_prev = xyz_t[:, 0]
     xyz_prev, symmsub = find_symm_subs(xyz_prev[:, :L], symmRs, symmmeta)
 
     Osub = symmsub.shape[0]
@@ -441,6 +436,15 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev):
                 # TODO: are B-factors modified during the docking process? should we use these instead of pLDDT?
                 pred_lddt, logits_pae, logit_s = None, None, None
                 continue
+
+            if use_xyz_prev:
+                xyz_prev = xyz_globin.to(xyz_prev)
+            if use_template:
+                xyz_t = xyz_globin.to(xyz_t)[:,:,1].unsqueeze(0)
+            if not use_pair_prev:
+                pair_prev = torch.zeros_like(pair_prev)
+            if not use_state_prev:
+                state_prev = torch.zeros_like(state_prev)
 
             best_xyz = xyz_prev
             best_logit = logit_s
