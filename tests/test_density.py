@@ -208,8 +208,8 @@ def test_center_and_realign_missing():
 
 
 @pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev"), [
-    (True, False, False, False),
-    # (False, True, False, False),
+    # (True, False, False, False),
+    (False, True, False, False),
     # (False, False, True, False),
     # (False, False, False, True),
 ])
@@ -232,15 +232,15 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
     symm = "C1"
     nseqs_full = 2048
     n_templ = 1
-    n_recycles = 2
+    n_recycles = 1
     nseqs = 256
     subcrop = -1
     topk = -1
     low_vram = False
+    B = 1
     msa_concat_mode = "diag"
     pred.xyz_converter = pred.xyz_converter.cpu()
     out_prefix = "test_predict_globin_w_rotated_template"
-    msa_mask = 0.0
 
     ###
     # pass 1, combined MSA
@@ -384,7 +384,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
         for i_cycle in range(n_recycles + 1):
             from network.featurizing import MSAFeaturize
             seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
-                msa, ins, p_mask=msa_mask, params={'MAXLAT': nseqs, 'MAXSEQ': nseqs_full, 'MAXCYCLE': 1})
+                msa, ins, p_mask=0.0, params={'MAXLAT': nseqs, 'MAXSEQ': nseqs_full, 'MAXCYCLE': 1})
 
             seq = seq.unsqueeze(0)
             msa_seed = msa_seed.unsqueeze(0)
@@ -437,21 +437,26 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                 pred_lddt, logits_pae, logit_s = None, None, None
                 continue
 
-            if use_xyz_prev:
-                xyz_prev = xyz_globin.to(xyz_prev)
-            if use_template:
-                xyz_t = xyz_globin.to(xyz_t)[:,:,1].unsqueeze(0)
-            if not use_pair_prev:
-                pair_prev = torch.zeros_like(pair_prev)
-            if not use_state_prev:
-                state_prev = torch.zeros_like(state_prev)
-
             best_xyz = xyz_prev
             best_logit = logit_s
             best_lddt = pred_lddt.half().cpu()
             best_pae = logits_pae.half().cpu()
             best_logit = [l.half().cpu() for l in logit_s]
             pred_lddt, logits_pae, logit_s = None, None, None
+
+            remaining_residues = torch.tensor([0, 75, 150])
+            if use_template:
+                xyz_t = xyz_globin.to(xyz_t)[:, :, 1].unsqueeze(0)
+                mask_t = torch.full_like(mask_t, False)
+                mask_t[:, :, remaining_residues, :] = True
+            if use_xyz_prev:
+                xyz_prev = xyz_globin.to(xyz_prev)
+                mask_recycle = torch.full((B, L, L), False, device=xyz_prev.device)
+                mask_recycle[:, remaining_residues, remaining_residues] = True
+            if not use_pair_prev:
+                pair_prev = torch.zeros_like(pair_prev)
+            if not use_state_prev:
+                state_prev = torch.zeros_like(state_prev)
 
         # free more memory
         pair_prev, msa_prev, t2d = None, None, None
@@ -486,12 +491,3 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                         dist=prob_s[0].astype(np.float16),
                         lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
                         pae=best_pae[0].detach().cpu().numpy().astype(np.float16))
-
-    # return prediction
-    retval = {
-        'xyz': best_xyz[0],  # TODO: why the singleton batch dimension?
-        'Ls': Ls,
-        'seq': seq[0],
-        'plddt': best_lddt[0],
-        'pae': best_pae[0],
-    }
