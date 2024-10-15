@@ -209,9 +209,15 @@ def test_center_and_realign_missing():
 
 def test_predict_globin_w_rotated_template():
     import torch
-    from network.predict import Predictor, merge_a3m_homo
-    from network.symmetry import symm_subunit_matrix
+    from network.predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
+    from network.symmetry import symm_subunit_matrix, find_symm_subs
     from network.chemical import INIT_CRDS
+    from network.parsers import parse_a3m
+    from network.data_loader import merge_a3m_hetero
+    from network.kinematics import xyz_to_t2d
+    from network import util
+    import numpy as np
+    from torch import nn
 
     torch.backends.cuda.preferred_linalg_library(backend="magma")  # avoid issue with cuSOLVER when computing SVD
 
@@ -228,13 +234,13 @@ def test_predict_globin_w_rotated_template():
     msa_concat_mode = "diag"
     pred.xyz_converter = pred.xyz_converter.cpu()
     out_prefix = "test_predict_globin_w_rotated_template"
+    msa_mask = 0.0
 
     ###
     # pass 1, combined MSA
     Ls_blocked, Ls, msas, inss = [], [], [], []
 
     a3m_i = "a3m/myoglobin.a3m"
-    from network.parsers import parse_a3m
     msa_i, ins_i, Ls_i = parse_a3m(a3m_i)
     msa_i = torch.tensor(msa_i).long()
     ins_i = torch.tensor(ins_i).long()
@@ -245,7 +251,6 @@ def test_predict_globin_w_rotated_template():
 
     msa_orig = {'msa': msas[0], 'ins': inss[0]}
     for i in range(1, len(Ls_blocked)):
-        from network.data_loader import merge_a3m_hetero
         msa_orig = merge_a3m_hetero(msa_orig, {'msa': msas[i], 'ins': inss[i]}, [sum(Ls_blocked[:i]), Ls_blocked[i]])
     msa_orig, ins_orig = msa_orig['msa'], msa_orig['ins']
 
@@ -294,7 +299,6 @@ def test_predict_globin_w_rotated_template():
     ###
     # pass 3, symmetry
     xyz_prev = xyz_t[:, 0]
-    from network.symmetry import find_symm_subs
     xyz_prev, symmsub = find_symm_subs(xyz_prev[:, :L], symmRs, symmmeta)
 
     Osub = symmsub.shape[0]
@@ -326,7 +330,174 @@ def test_predict_globin_w_rotated_template():
 
     pred.model.eval()
 
-    pred.run_prediction(
+    pred.xyz_converter = pred.xyz_converter.to(pred.device)
+    pred.lddt_bins = pred.lddt_bins.to(pred.device)
+
+    STRIPE = get_striping_parameters(low_vram)
+
+    with torch.no_grad():
+        msa = msa_orig.long().to(pred.device)  # (N, L)
+        ins = ins_orig.long().to(pred.device)
+
+        print(f"N={msa.shape[0]} L={msa.shape[1]}")
+        N, L = msa.shape[:2]
+        O = symmids.shape[0]
+        Osub = symmsub.shape[0]
+        Lasu = L // Osub
+
+        B = 1
+        #
+        t1d = t1d.to(pred.device).half()
+        t2d = xyz_to_t2d(xyz_t, mask_t).half()
+        if not low_vram:
+            t2d = t2d.to(pred.device)  # .half()
+        idx_pdb = idx_pdb.to(pred.device)
+        xyz_t = xyz_t[:, :, :, 1].to(pred.device)
+        mask_t = mask_t.to(pred.device)
+        alpha_t = alpha_t.to(pred.device)
+        xyz_prev = xyz_prev.to(pred.device)
+        mask_prev = mask_prev.to(pred.device)
+        same_chain = same_chain.to(pred.device)
+        symmids = symmids.to(pred.device)
+        symmsub = symmsub.to(pred.device)
+        symmRs = symmRs.to(pred.device)
+
+        subsymms, _ = symmmeta
+        for i in range(len(subsymms)):
+            subsymms[i] = subsymms[i].to(pred.device)
+
+        msa_prev = None
+        pair_prev = None
+        state_prev = None
+        mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
+        mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
+        mask_recycle = same_chain.float() * mask_recycle.float()
+
+        best_lddt = torch.tensor([-1.0], device=pred.device)
+        best_xyz = None
+        best_logit = None
+        best_pae = None
+
+        for i_cycle in range(n_recycles + 1):
+            from network.featurizing import MSAFeaturize
+            seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
+                msa, ins, p_mask=msa_mask, params={'MAXLAT': nseqs, 'MAXSEQ': nseqs_full, 'MAXCYCLE': 1})
+
+            seq = seq.unsqueeze(0)
+            msa_seed = msa_seed.unsqueeze(0)
+            msa_extra = msa_extra.unsqueeze(0)
+
+            # fd memory savings
+            msa_seed = msa_seed.half()  # GPU ONLY
+            msa_extra = msa_extra.half()  # GPU ONLY
+
+            xyz_prev_prev = xyz_prev.clone()
+
+            with torch.cuda.amp.autocast(True):
+                logit_s, _, _, logits_pae, p_bind, xyz_prev, alpha, symmsub, pred_lddt, msa_prev, pair_prev, state_prev = pred.model(
+                    msa_seed, msa_extra,
+                    seq, xyz_prev,
+                    idx_pdb,
+                    t1d=t1d, t2d=t2d, xyz_t=xyz_t,
+                    alpha_t=alpha_t, mask_t=mask_t,
+                    same_chain=same_chain,
+                    msa_prev=msa_prev,
+                    pair_prev=pair_prev,
+                    state_prev=state_prev,
+                    p2p_crop=subcrop,
+                    topk_crop=topk,
+                    mask_recycle=mask_recycle,
+                    symmids=symmids,
+                    symmsub=symmsub,
+                    symmRs=symmRs,
+                    symmmeta=symmmeta,
+                    striping=STRIPE)
+                alpha = alpha[-1].to(seq.device)
+                xyz_prev = xyz_prev[-1].to(seq.device)
+                _, xyz_prev = pred.xyz_converter.compute_all_atom(seq, xyz_prev, alpha)
+
+            mask_recycle = None
+            pair_prev = pair_prev.cpu()
+            msa_prev = msa_prev.cpu()
+
+            pred_lddt = nn.Softmax(dim=1)(pred_lddt.half()) * pred.lddt_bins[None, :, None]
+            pred_lddt = pred_lddt.sum(dim=1)
+            logits_pae = pae_unbin(logits_pae.half())
+
+            # TODO: what is the point of the new singleton dimension (N) in xyz_prev_prev[None]?
+
+            print(f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f} rmsd: TODO")
+
+            torch.cuda.empty_cache()
+            if pred_lddt.mean() < best_lddt.mean():
+                # TODO: are B-factors modified during the docking process? should we use these instead of pLDDT?
+                pred_lddt, logits_pae, logit_s = None, None, None
+                continue
+
+            best_xyz = xyz_prev
+            best_logit = logit_s
+            best_lddt = pred_lddt.half().cpu()
+            best_pae = logits_pae.half().cpu()
+            best_logit = [l.half().cpu() for l in logit_s]
+            pred_lddt, logits_pae, logit_s = None, None, None
+
+        # free more memory
+        pair_prev, msa_prev, t2d = None, None, None
+
+        prob_s = list()
+        for logit in best_logit:
+            prob = pred.active_fn(logit.to(pred.device).float())  # distogram
+            prob_s.append(prob.half().cpu())
+
+    # full complex
+    best_xyz = best_xyz.float().cpu()
+    symmRs = symmRs.cpu()
+    best_xyzfull = torch.zeros((B, O * Lasu, 27, 3))
+    best_xyzfull[:, :Lasu] = best_xyz[:, :Lasu]
+    seq_full = torch.zeros((B, O * Lasu), dtype=seq.dtype)
+    seq_full[:, :Lasu] = seq[:, :Lasu]
+    best_lddtfull = torch.zeros((B, O * Lasu))
+    best_lddtfull[:, :Lasu] = best_lddt[:, :Lasu]
+    for i in range(1, O):
+        best_xyzfull[:, (i * Lasu):((i + 1) * Lasu)] = torch.einsum('ij,braj->brai', symmRs[i], best_xyz[:, :Lasu])
+        seq_full[:, (i * Lasu):((i + 1) * Lasu)] = seq[:, :Lasu]
+        best_lddtfull[:, (i * Lasu):((i + 1) * Lasu)] = best_lddt[:, :Lasu]
+
+    outdata = {}
+
+    # RMS
+    outdata['mean_plddt'] = best_lddt.mean().item()
+    Lstarti = 0
+    for i, li in enumerate(Ls):
+        Lstartj = 0
+        for j, lj in enumerate(Ls):
+            if (j > i):
+                outdata['pae_chain_' + str(i) + '_' + str(j)] = 0.5 * (
+                        best_pae[:, Lstarti:(Lstarti + li), Lstartj:(Lstartj + lj)].mean()
+                        + best_pae[:, Lstartj:(Lstartj + lj), Lstarti:(Lstarti + li)].mean()
+                ).item()
+            Lstartj += lj
+        Lstarti += li
+
+    outfile = "%s_pred.pdb" % (out_prefix)
+    util.writepdb(outfile, best_xyzfull[0], seq_full[0], Ls, bfacts=100 * best_lddtfull[0])
+
+    prob_s = [prob.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.float16) for prob in prob_s]
+    np.savez_compressed("%s.npz" % (out_prefix),
+                        dist=prob_s[0].astype(np.float16),
+                        lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
+                        pae=best_pae[0].detach().cpu().numpy().astype(np.float16))
+
+    # return prediction
+    retval = {
+        'xyz': best_xyzfull[0],  # TODO: why the singleton batch dimension?
+        'Ls': Ls,
+        'seq': seq_full[0],
+        'plddt': best_lddtfull[0],
+        'pae': best_pae[0],
+    }
+
+    results = pred.run_prediction(
         msa_orig, ins_orig,
         t1d, xyz_t, alpha_t, mask_t_2d,
         xyz_prev, mask_prev, same_chain, idx_pdb,
@@ -334,3 +505,4 @@ def test_predict_globin_w_rotated_template():
         n_recycles, nseqs, nseqs_full, subcrop, topk, low_vram,
         out_prefix,
     )
+
