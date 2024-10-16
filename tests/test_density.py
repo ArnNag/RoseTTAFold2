@@ -195,20 +195,22 @@ def test_multidock():
 
 def test_center_and_realign_missing():
     from network.util import center_and_realign_missing
-    L = 1
+    L = 4
+    MAX_NUM_ATOMS_PER_RESIDUE = 3
     xyz = torch.rand(L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
-    mask_t = torch.bernoulli(torch.full((L,), 0.5)).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
+    mask_t = torch.bernoulli(torch.full((L, 1), 0.5)).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
+    # mask_t = torch.tensor([0, 1]).unsqueeze(1).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
     result = center_and_realign_missing(xyz, mask_t)
-    assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
-    ic(torch.all(torch.eq(xyz, result), dim=2))
-    assert torch.equal(torch.all(torch.eq(xyz, result), dim=2), mask_t)
     ic(xyz)
     ic(mask_t)
     ic(result)
+    assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    ic(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2))
+    assert torch.equal(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2), torch.logical_not(mask_t))
 
 
 @pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev"), [
-    # (True, False, False, False),
+    (True, False, False, False),
     (False, True, False, False),
     # (False, False, True, False),
     # (False, False, False, True),
@@ -445,12 +447,14 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
             pred_lddt, logits_pae, logit_s = None, None, None
 
             remaining_residues = torch.tensor([0, 75, 150])
+            globin_mask_t = torch.full_like(mask_t, False)
+            globin_mask_t[:, :, remaining_residues, :] = True
+            xyz_globin_masked_centered_realigned = util.center_and_realign_missing(xyz_globin[0, :, :, :], globin_mask_t[0, 0, :, :])
             if use_template:
-                xyz_t = xyz_globin.to(xyz_t)[:, :, 1].unsqueeze(0)
-                mask_t = torch.full_like(mask_t, False)
-                mask_t[:, :, remaining_residues, :] = True
+                xyz_t = xyz_globin_masked_centered_realigned[:, 1, :].unsqueeze(0).unsqueeze(0).to(xyz_t)
+                mask_t = globin_mask_t
             if use_xyz_prev:
-                xyz_prev = xyz_globin.to(xyz_prev)
+                xyz_prev = xyz_globin_masked_centered_realigned.unsqueeze(0).to(xyz_prev)
                 mask_recycle = torch.full((B, L, L), False, device=xyz_prev.device)
                 mask_recycle[:, remaining_residues, remaining_residues] = True
             if not use_pair_prev:
