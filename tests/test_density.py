@@ -210,10 +210,23 @@ def test_center_and_realign_missing():
 
 
 @pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev"), [
-    (True, False, False, False),
+    (False, False, False, False),
+    (False, False, False, True),
+    (False, False, True, False),
+    (False, False, True, True),
     (False, True, False, False),
-    # (False, False, True, False),
-    # (False, False, False, True),
+    (False, True, False, False),
+    (False, True, False, True),
+    (False, True, True, False),
+    (False, True, True, True),
+    (True, False, False, False),
+    (True, False, False, True),
+    (True, False, True, False),
+    (True, False, True, True),
+    (True, True, False, False),
+    (True, True, False, True),
+    (True, True, True, False),
+    (True, True, True, True),
 ])
 def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state_prev, use_pair_prev):
     import torch
@@ -234,7 +247,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
     symm = "C1"
     nseqs_full = 2048
     n_templ = 1
-    n_recycles = 1
+    n_recycles = 3
     nseqs = 256
     subcrop = -1
     topk = -1
@@ -487,11 +500,11 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
             Lstartj += lj
         Lstarti += li
 
-    outfile = "%s_pred.pdb" % (out_prefix)
+    outfile = f"{out_prefix}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_pred.pdb"
     util.writepdb(outfile, best_xyz[0], seq[0], Ls, bfacts=100 * best_lddt[0])
 
     prob_s = [prob.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.float16) for prob in prob_s]
-    np.savez_compressed("%s.npz" % (out_prefix),
+    np.savez_compressed(f"{out_prefix}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}",
                         dist=prob_s[0].astype(np.float16),
                         lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
                         pae=best_pae[0].detach().cpu().numpy().astype(np.float16))
