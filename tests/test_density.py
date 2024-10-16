@@ -451,7 +451,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
             globin_mask_t[:, :, remaining_residues, :] = True
             xyz_globin_masked_centered_realigned = util.center_and_realign_missing(xyz_globin[0, :, :, :], globin_mask_t[0, 0, :, :])
             if use_template:
-                xyz_t = xyz_globin_masked_centered_realigned[:, 1, :].unsqueeze(0).unsqueeze(0).to(xyz_t)
+                xyz_t = xyz_globin_masked_centered_realigned[None, None, :, 1, :].to(xyz_t)
                 mask_t = globin_mask_t
             if use_xyz_prev:
                 xyz_prev = xyz_globin_masked_centered_realigned.unsqueeze(0).to(xyz_prev)
