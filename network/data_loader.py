@@ -260,7 +260,7 @@ def TemplFeaturize(tplt, qlen, params, offset=0, npick=1, npick_global=None, pic
         # 1-D features: alignment confidence 
         t1d[i,pos] = tplt['seq'][0,sel]
         t1d_val[i,pos] = tplt['f1d'][0,sel,2] # alignment confidence
-        xyz[i] = center_and_realign_missing(xyz[i], mask_t[i])
+        xyz[i] = center_and_realign_missing(xyz[i], mask_t[i], sigma=1.0)
 
     t1d = torch.nn.functional.one_hot(t1d, num_classes=21).float()
     t1d = torch.cat((t1d, t1d_val[...,None]), dim=-1)

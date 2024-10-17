@@ -225,11 +225,6 @@ def test_center_and_realign_missing_globin():
 
     mask = mask_t[:, :3].all(dim=-1)  # True for valid atom (L)
 
-    # center c.o.m of unmasked region at the origin
-    center_CA = (mask[..., None] * xyz[:, 1]).sum(dim=0) / (mask[..., None].sum(dim=0) + 1e-5)  # (3), c.o.m. of unmasked region
-    xyz = torch.where(mask.view(L, 1, 1), xyz - center_CA.view(1, 1, 3), xyz)
-    util.writepdb("xyz_minus_center_CA.pdb", xyz, seq, Ls)
-
     # move missing residues to the closest valid residues
     exist_in_xyz = torch.where(mask)[0]  # L_sub
     ic(exist_in_xyz)
@@ -248,12 +243,21 @@ def test_center_and_realign_missing_globin():
     ic(offset_CA)
     ic(offset_CA.shape)
     # moving all atoms in the masked region to the alpha carbon of the sequence-wise closest defined residue
-    xyz = torch.where(mask.view(L, 1, 1), xyz, offset_CA.reshape(L, 1, 3))
+    xyz = torch.where(mask.view(L, 1, 1), xyz, torch.randn(L, 1, 3) + offset_CA.reshape(L, 1, 3))
     ic(xyz)
     ic(xyz.shape)
     outfile = "center_and_realign_missing_globin.pdb"
     util.writepdb(outfile, xyz, seq, Ls)
 
+
+def test_realign_missing_no_masked_residues_is_noop():
+    from network.util import realign_missing
+    L = 97
+    xyz = torch.rand(L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    mask_t = torch.full((L, MAX_NUM_ATOMS_PER_RESIDUE), True)
+    result = realign_missing(xyz, mask_t, sigma=1e14)
+    assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    assert torch.all(torch.isclose(xyz, result))
 
 @pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev"), [
     # (False, False, False, False),
@@ -261,10 +265,10 @@ def test_center_and_realign_missing_globin():
     # (False, False, True, False),
     # (False, False, True, True),
     # (False, True, False, False),
-    # (False, True, False, False),
-    (False, True, False, True),
-    (False, True, True, False),
-    (False, True, True, True),
+    (False, True, False, False),
+    # (False, True, False, True),
+    # (False, True, True, False),
+    # (False, True, True, True),
     # (True, False, False, False),
     # (True, False, False, True),
     # (True, False, True, False),
@@ -505,10 +509,10 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
             best_logit = [l.half().cpu() for l in logit_s]
             pred_lddt, logits_pae, logit_s = None, None, None
 
-            remaining_residues = torch.tensor([0, 75, 150])
+            remaining_residues = torch.arange(100)
             globin_mask_t = torch.full_like(mask_t, False)
             globin_mask_t[:, :, remaining_residues, :] = True
-            xyz_globin_masked_centered_realigned = util.center_and_realign_missing(xyz_globin[0, :, :, :], globin_mask_t[0, 0, :, :])
+            xyz_globin_masked_centered_realigned = util.realign_missing(xyz_globin[0, :, :, :], globin_mask_t[0, 0, :, :], sigma=1e-1)
             if use_template:
                 xyz_t = xyz_globin_masked_centered_realigned[None, None, :, 1, :].to(xyz_t)
                 mask_t = globin_mask_t
@@ -554,3 +558,25 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                         dist=prob_s[0].astype(np.float16),
                         lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
                         pae=best_pae[0].detach().cpu().numpy().astype(np.float16))
+
+def test_manual_split_and_dock():
+    # load the structure
+    from pyrosetta import pose_from_file, init, Pose, rosetta
+    from network.density import setup_docking_mover
+    init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
+    pose_orig: Pose = pose_from_file('pdb/7zri.cif')
+    chain_B: Pose = pose_orig.split_by_chain()[5]
+    movable_region = Pose(chain_B, 309, 442)
+    # immovable_region = Pose(chain_B, 0, 308)
+    # immovable_region.append_pose_by_jump(Pose(chain_B, 443, 677), 308)
+
+    mapfile = "map/emd_14914.map"
+    rosetta.core.scoring.electron_density.getDensityMap(mapfile)
+    dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts=1)
+
+    dock_into_dens.apply(movable_region)
+    # dock_into_dens.apply(immovable_region)
+
+    movable_region.pdb_info(rosetta.core.pose.PDBInfo(movable_region))
+    movable_region.dump_pdb(f"after_dock_movable_region.pdb")
+
