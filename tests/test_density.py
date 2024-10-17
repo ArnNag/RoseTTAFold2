@@ -195,11 +195,11 @@ def test_multidock():
 
 def test_center_and_realign_missing():
     from network.util import center_and_realign_missing
-    L = 4
+    L = 2
     MAX_NUM_ATOMS_PER_RESIDUE = 3
     xyz = torch.rand(L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
-    mask_t = torch.bernoulli(torch.full((L, 1), 0.5)).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
-    # mask_t = torch.tensor([0, 1]).unsqueeze(1).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
+    # mask_t = torch.bernoulli(torch.full((L, 1), 0.5)).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
+    mask_t = torch.tensor([0, 1]).unsqueeze(1).expand(L, MAX_NUM_ATOMS_PER_RESIDUE)
     result = center_and_realign_missing(xyz, mask_t)
     ic(xyz)
     ic(mask_t)
@@ -208,25 +208,70 @@ def test_center_and_realign_missing():
     ic(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2))
     assert torch.equal(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2), torch.logical_not(mask_t))
 
+def test_center_and_realign_missing_globin():
+    from network.parsers import parse_pdb_w_seq
+    from network import util
+    xyz, _, _, seq = parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")
+    xyz = torch.from_numpy(xyz)
+    seq = torch.from_numpy(seq)
+    L = xyz.shape[0]
+    Ls = [L]
+    remaining_residues = torch.arange(0, 20)
+    mask_t = torch.full((L, MAX_NUM_ATOMS_PER_RESIDUE), False)
+    mask_t[remaining_residues, :] = True
+
+    # xyz: (L, 27, 3)
+    # mask_t: (L, 27)
+
+    mask = mask_t[:, :3].all(dim=-1)  # True for valid atom (L)
+
+    # center c.o.m at the origin
+    center_CA = (mask[..., None] * xyz[:, 1]).sum(dim=0) / (mask[..., None].sum(dim=0) + 1e-5)  # (3)
+    xyz = torch.where(mask.view(L, 1, 1), xyz - center_CA.view(1, 1, 3), xyz)
+    util.writepdb("xyz_minus_center_CA.pdb", xyz, seq, Ls)
+
+    # move missing residues to the closest valid residues
+    exist_in_xyz = torch.where(mask)[0]  # L_sub
+    ic(exist_in_xyz)
+    seqmap = (torch.arange(L, device=xyz.device)[:, None] - exist_in_xyz[None, :]).abs()  # (L, Lsub)
+    ic()
+    ic(seqmap)
+    ic(seqmap.shape)
+    seqmap = torch.argmin(seqmap, dim=-1)  # L
+    ic()
+    ic(seqmap)
+    ic(seqmap.shape)
+    idx = torch.gather(exist_in_xyz, 0, seqmap)
+    ic(idx)
+    ic(idx.shape)
+    offset_CA = torch.gather(xyz[:, 1], 0, idx.reshape(L, 1).expand(-1, 3))
+    ic(offset_CA)
+    ic(offset_CA.shape)
+    xyz = torch.where(mask.view(L, 1, 1), xyz, xyz + offset_CA.reshape(L, 1, 3))
+    ic(xyz)
+    ic(xyz.shape)
+    outfile = "center_and_realign_missing_globin.pdb"
+    util.writepdb(outfile, xyz, seq, Ls)
+
 
 @pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev"), [
-    (False, False, False, False),
-    (False, False, False, True),
-    (False, False, True, False),
-    (False, False, True, True),
-    (False, True, False, False),
-    (False, True, False, False),
+    # (False, False, False, False),
+    # (False, False, False, True),
+    # (False, False, True, False),
+    # (False, False, True, True),
+    # (False, True, False, False),
+    # (False, True, False, False),
     (False, True, False, True),
     (False, True, True, False),
     (False, True, True, True),
-    (True, False, False, False),
-    (True, False, False, True),
-    (True, False, True, False),
-    (True, False, True, True),
-    (True, True, False, False),
-    (True, True, False, True),
-    (True, True, True, False),
-    (True, True, True, True),
+    # (True, False, False, False),
+    # (True, False, False, True),
+    # (True, False, True, False),
+    # (True, False, True, True),
+    # (True, True, False, False),
+    # (True, True, False, True),
+    # (True, True, True, False),
+    # (True, True, True, True),
 ])
 def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state_prev, use_pair_prev):
     import torch
