@@ -225,8 +225,8 @@ def test_center_and_realign_missing_globin():
 
     mask = mask_t[:, :3].all(dim=-1)  # True for valid atom (L)
 
-    # center c.o.m at the origin
-    center_CA = (mask[..., None] * xyz[:, 1]).sum(dim=0) / (mask[..., None].sum(dim=0) + 1e-5)  # (3)
+    # center c.o.m of unmasked region at the origin
+    center_CA = (mask[..., None] * xyz[:, 1]).sum(dim=0) / (mask[..., None].sum(dim=0) + 1e-5)  # (3), c.o.m. of unmasked region
     xyz = torch.where(mask.view(L, 1, 1), xyz - center_CA.view(1, 1, 3), xyz)
     util.writepdb("xyz_minus_center_CA.pdb", xyz, seq, Ls)
 
@@ -247,7 +247,8 @@ def test_center_and_realign_missing_globin():
     offset_CA = torch.gather(xyz[:, 1], 0, idx.reshape(L, 1).expand(-1, 3))
     ic(offset_CA)
     ic(offset_CA.shape)
-    xyz = torch.where(mask.view(L, 1, 1), xyz, xyz + offset_CA.reshape(L, 1, 3))
+    # moving all atoms in the masked region to the alpha carbon of the sequence-wise closest defined residue
+    xyz = torch.where(mask.view(L, 1, 1), xyz, offset_CA.reshape(L, 1, 3))
     ic(xyz)
     ic(xyz.shape)
     outfile = "center_and_realign_missing_globin.pdb"

@@ -35,7 +35,7 @@ def center_and_realign_missing(xyz, mask_t):
     seqmap = torch.argmin(seqmap, dim=-1) # L
     idx = torch.gather(exist_in_xyz, 0, seqmap)
     offset_CA = torch.gather(xyz[:,1], 0, idx.reshape(L,1).expand(-1,3))
-    xyz = torch.where(mask.view(L,1,1), xyz, xyz + offset_CA.reshape(L,1,3))
+    xyz = torch.where(mask.view(L,1,1), xyz, offset_CA.reshape(L,1,3))
 
     return xyz
 
