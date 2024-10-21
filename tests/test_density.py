@@ -208,9 +208,10 @@ def test_center_and_realign_missing():
     ic(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2))
     assert torch.equal(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2), torch.logical_not(mask_t))
 
-def test_center_and_realign_missing_globin():
+def test_realign_missing_globin():
     from network.parsers import parse_pdb_w_seq
     from network import util
+    sigma = 1e-1
     xyz, _, _, seq = parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")
     xyz = torch.from_numpy(xyz)
     seq = torch.from_numpy(seq)
@@ -243,7 +244,7 @@ def test_center_and_realign_missing_globin():
     ic(offset_CA)
     ic(offset_CA.shape)
     # moving all atoms in the masked region to the alpha carbon of the sequence-wise closest defined residue
-    xyz = torch.where(mask.view(L, 1, 1), xyz, torch.randn(L, 1, 3) + offset_CA.reshape(L, 1, 3))
+    xyz = torch.where(mask.view(L, 1, 1), xyz, torch.randn(L, 1, 3) * sigma + offset_CA.reshape(L, 1, 3))
     ic(xyz)
     ic(xyz.shape)
     outfile = "center_and_realign_missing_globin.pdb"
@@ -560,7 +561,6 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                         pae=best_pae[0].detach().cpu().numpy().astype(np.float16))
 
 def test_manual_split_and_dock():
-    # load the structure
     from pyrosetta import pose_from_file, init, Pose, rosetta
     from network.density import setup_docking_mover
     init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
@@ -579,4 +579,37 @@ def test_manual_split_and_dock():
 
     movable_region.pdb_info(rosetta.core.pose.PDBInfo(movable_region))
     movable_region.dump_pdb(f"after_dock_movable_region.pdb")
+
+
+def test_rigid_twist_dock_from_af2_model():
+    from pyrosetta import pose_from_file, init, Pose, rosetta
+    from network.density import setup_docking_mover
+    init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
+    pose_orig: Pose = pose_from_file('pdb/AF-P03960-F1-model_v4.cif')
+
+    mapfile = "map/emd_14914.map"
+    rosetta.core.scoring.electron_density.getDensityMap(mapfile)
+    dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts=1)
+
+    dock_into_dens.apply(pose_orig)
+
+    pose_orig.pdb_info(rosetta.core.pose.PDBInfo(pose_orig))
+    pose_orig.dump_pdb(f"af2_after_dock_movable_region.pdb")
+
+
+def test_af2_pae_split():
+    import json
+    import networkx as nx
+    pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
+    pae = json.load(open(pae_path))[0]["predicted_aligned_error"]
+    pae_graph = nx.complete_graph(len(pae))
+    for i in range(len(pae_graph)):
+        for j in range(len(pae_graph)):
+            if i != j:
+                pae_graph[i][j]["weight"] = pae[i][j]
+    
+    pae_sets = nx.algorithms.community.louvain.louvain_communities(pae_graph, resolution=1.003)
+    for pae_set in pae_sets:
+        print(pae_set)
+
 
