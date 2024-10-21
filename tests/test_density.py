@@ -520,6 +520,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                 mapfile = f"map/{map_name}.map"
                 before_dock_file = f"before_dock_cycle_{i_cycle}"
                 util.writepdb(before_dock_file, xyz_prev, seq, Ls, bfacts=100 * pred_lddt)
+                rosetta.core.scoring.electron_density.getDensityMap(mapfile)
                 dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(
                     counts=1)
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
