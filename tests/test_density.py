@@ -260,26 +260,27 @@ def test_realign_missing_no_masked_residues_is_noop():
     assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
     assert torch.all(torch.isclose(xyz, result))
 
-@pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev"), [
-    # (False, False, False, False),
-    # (False, False, False, True),
-    # (False, False, True, False),
-    # (False, False, True, True),
-    # (False, True, False, False),
-    (False, True, False, False),
-    # (False, True, False, True),
-    # (False, True, True, False),
-    # (False, True, True, True),
-    # (True, False, False, False),
-    # (True, False, False, True),
-    # (True, False, True, False),
-    # (True, False, True, True),
-    # (True, True, False, False),
-    # (True, True, False, True),
-    # (True, True, True, False),
-    # (True, True, True, True),
+@pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev", "a3m_name", "map_name"), [
+    # (False, False, False, False, "myoglobin", None),
+    # (False, False, False, True, "myoglobin", None),
+    # (False, False, True, False, "myoglobin", None),
+    # (False, False, True, True, "myoglobin", None),
+    # (False, True, False, False, "myoglobin", None),
+    # (False, True, False, False, "myoglobin", None),
+    (False, True, False, False, "atpbind", "emd_14914"),
+    # (False, True, False, True, "myoglobin", None),
+    # (False, True, True, False, "myoglobin", None),
+    # (False, True, True, True, "myoglobin", None),
+    # (True, False, False, False, "myoglobin", None),
+    # (True, False, False, True, "myoglobin", None),
+    # (True, False, True, False, "myoglobin", None),
+    # (True, False, True, True, "myoglobin", None),
+    # (True, True, False, False, "myoglobin", None),
+    # (True, True, False, True, "myoglobin", None),
+    # (True, True, True, False, "myoglobin", None),
+    # (True, True, True, True, "myoglobin", None),
 ])
-def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state_prev, use_pair_prev):
+def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state_prev, use_pair_prev, a3m_name, map_name):
     import torch
     from network.predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
     from network.symmetry import symm_subunit_matrix, find_symm_subs
@@ -312,7 +313,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
     # pass 1, combined MSA
     Ls_blocked, Ls, msas, inss = [], [], [], []
 
-    a3m_i = "a3m/myoglobin.a3m"
+    a3m_i = f"a3m/{a3m_name}.a3m"
     msa_i, ins_i, Ls_i = parse_a3m(a3m_i)
     msa_i = torch.tensor(msa_i).long()
     ins_i = torch.tensor(ins_i).long()
@@ -331,7 +332,6 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
     ###
     # pass 2, templates
     L = sum(Ls)
-    xyz_globin = torch.from_numpy(parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")[0]).unsqueeze(0)
 
     # dummy template
     SYMM_OFFSET_SCALE = 1.0
@@ -437,7 +437,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
 
         msa_prev = None
         pair_prev = None
-        state_prev = None
+
         mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
         mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
         mask_recycle = same_chain.float() * mask_recycle.float()
@@ -508,17 +508,39 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
             best_lddt = pred_lddt.half().cpu()
             best_pae = logits_pae.half().cpu()
             best_logit = [l.half().cpu() for l in logit_s]
-            pred_lddt, logits_pae, logit_s = None, None, None
+            logits_pae, logit_s = None, None
 
             remaining_residues = torch.arange(100)
             globin_mask_t = torch.full_like(mask_t, False)
             globin_mask_t[:, :, remaining_residues, :] = True
-            xyz_globin_masked_centered_realigned = util.realign_missing(xyz_globin[0, :, :, :], globin_mask_t[0, 0, :, :], sigma=1e-1)
+            if map_name is not None:
+                from network.density import setup_docking_mover
+                from pyrosetta import rosetta, Pose, pose_from_pdb
+                import shutil
+                mapfile = f"map/{map_name}.map"
+                before_dock_file = f"before_dock_cycle_{i_cycle}"
+                util.writepdb(before_dock_file, xyz_prev, seq, Ls, bfacts=100 * pred_lddt)
+                dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(
+                    counts=1)
+                pose_before_fit: Pose = pose_from_pdb(before_dock_file)
+                dock_into_dens.apply(pose_before_fit)
+                after_dock_file = f"after_dock_cycle_{i_cycle}"
+                shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
+                new_xyz = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_prev)
+            else:
+                # hard-code the new_xyz based on a provided PDB file instead of doing density fitting
+                # TODO: allow a structure other than myoglobin
+                new_xyz = torch.from_numpy(
+                    parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")[0]).unsqueeze(0)
+
+            pred_lddt = None
+
+            # xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], globin_mask_t[0, 0, :, :], sigma=1e-1).unsqueeze(0)
             if use_template:
-                xyz_t = xyz_globin_masked_centered_realigned[None, None, :, 1, :].to(xyz_t)
+                xyz_t = new_xyz[None, :, 1, :].to(xyz_t)
                 mask_t = globin_mask_t
             if use_xyz_prev:
-                xyz_prev = xyz_globin_masked_centered_realigned.unsqueeze(0).to(xyz_prev)
+                xyz_prev = new_xyz.to(xyz_prev)
                 mask_recycle = torch.full((B, L, L), False, device=xyz_prev.device)
                 mask_recycle[:, remaining_residues, remaining_residues] = True
             if not use_pair_prev:
@@ -589,12 +611,10 @@ def test_rigid_twist_dock_from_af2_model():
 
     mapfile = "map/emd_14914.map"
     rosetta.core.scoring.electron_density.getDensityMap(mapfile)
+    movable_region = Pose(pose_orig, 319, 445)
     dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(counts=1)
 
-    dock_into_dens.apply(pose_orig)
-
-    pose_orig.pdb_info(rosetta.core.pose.PDBInfo(pose_orig))
-    pose_orig.dump_pdb(f"af2_after_dock_movable_region.pdb")
+    dock_into_dens.apply(movable_region)
 
 
 def test_af2_pae_split():
