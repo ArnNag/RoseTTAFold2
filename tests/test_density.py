@@ -311,16 +311,14 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
 
     ###
     # pass 1, combined MSA
-    Ls_blocked, Ls, msas, inss = [], [], [], []
-
     a3m_i = f"a3m/{a3m_name}.a3m"
     msa_i, ins_i, Ls_i = parse_a3m(a3m_i)
     msa_i = torch.tensor(msa_i).long()
     ins_i = torch.tensor(ins_i).long()
-    msas.append(msa_i)
-    inss.append(ins_i)
-    Ls.extend(Ls_i)
-    Ls_blocked.append(msa_i.shape[1])
+    msas = [msa_i]
+    inss = [ins_i]
+    Ls = Ls_i
+    Ls_blocked = [msa_i.shape[1]]
 
     msa_orig = {'msa': msas[0], 'ins': inss[0]}
     for i in range(1, len(Ls_blocked)):
@@ -437,7 +435,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
 
         msa_prev = None
         pair_prev = None
-
+        state_prev = None
         mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
         mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
         mask_recycle = same_chain.float() * mask_recycle.float()
@@ -519,7 +517,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                 import shutil
                 mapfile = f"map/{map_name}.map"
                 before_dock_file = f"before_dock_cycle_{i_cycle}"
-                util.writepdb(before_dock_file, xyz_prev, seq, Ls, bfacts=100 * pred_lddt)
+                util.writepdb(before_dock_file, xyz_prev[0], seq[0], Ls, bfacts=100 * pred_lddt[0])
                 rosetta.core.scoring.electron_density.getDensityMap(mapfile)
                 dock_into_dens: rosetta.protocols.electron_density.DockFragmentsIntoDensityMover = setup_docking_mover(
                     counts=1)
@@ -527,7 +525,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                 dock_into_dens.apply(pose_before_fit)
                 after_dock_file = f"after_dock_cycle_{i_cycle}"
                 shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
-                new_xyz = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_prev)
+                new_xyz = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_prev).unsqueeze(0)
             else:
                 # hard-code the new_xyz based on a provided PDB file instead of doing density fitting
                 # TODO: allow a structure other than myoglobin
