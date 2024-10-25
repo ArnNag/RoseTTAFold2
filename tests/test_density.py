@@ -3,6 +3,7 @@ import os
 
 import pytest
 import torch
+import numpy as np
 from icecream import ic
 
 L = 5
@@ -184,7 +185,6 @@ def test_parse_second_intermediate_pdb():
     ic(xyz_second_intermediate.shape)
 
 
-
 def test_multidock():
     from network.density import multidock_model
     import rosetta
@@ -207,6 +207,7 @@ def test_center_and_realign_missing():
     assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
     ic(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2))
     assert torch.equal(torch.all(torch.isclose(xyz, result, atol=1e-3), dim=2), torch.logical_not(mask_t))
+
 
 def test_realign_missing_globin():
     from network.parsers import parse_pdb_w_seq
@@ -260,6 +261,7 @@ def test_realign_missing_no_masked_residues_is_noop():
     assert result.shape == (L, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
     assert torch.all(torch.isclose(xyz, result))
 
+
 @pytest.mark.parametrize(("use_template", "use_xyz_prev", "use_state_prev", "use_pair_prev", "a3m_name", "map_name"), [
     # (False, False, False, False, "myoglobin", None),
     # (False, False, False, True, "myoglobin", None),
@@ -267,7 +269,8 @@ def test_realign_missing_no_masked_residues_is_noop():
     # (False, False, True, True, "myoglobin", None),
     # (False, True, False, False, "myoglobin", None),
     # (False, True, False, False, "myoglobin", None),
-    (False, True, False, False, "atpbind", "emd_14914"),
+    # (False, True, False, False, "atpbind", "emd_14914"),
+    (False, True, False, False, "test", "emd_14914"),
     # (False, True, False, True, "myoglobin", None),
     # (False, True, True, False, "myoglobin", None),
     # (False, True, True, True, "myoglobin", None),
@@ -280,7 +283,8 @@ def test_realign_missing_no_masked_residues_is_noop():
     # (True, True, True, False, "myoglobin", None),
     # (True, True, True, True, "myoglobin", None),
 ])
-def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state_prev, use_pair_prev, a3m_name, map_name):
+def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state_prev, use_pair_prev, a3m_name,
+                                           map_name):
     import torch
     from network.predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
     from network.symmetry import symm_subunit_matrix, find_symm_subs
@@ -321,7 +325,9 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
     Ls_blocked = [msa_i.shape[1]]
 
     msa_orig = {'msa': msas[0], 'ins': inss[0]}
+    print("got here")
     for i in range(1, len(Ls_blocked)):
+        print("got there")
         msa_orig = merge_a3m_hetero(msa_orig, {'msa': msas[i], 'ins': inss[i]}, [sum(Ls_blocked[:i]), Ls_blocked[i]])
     msa_orig, ins_orig = msa_orig['msa'], msa_orig['ins']
 
@@ -338,7 +344,6 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
             + torch.rand(n_templ, L, 1, 3) * 5.0 - 2.5
             + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
     )
-
 
     mask_t = torch.full((n_templ, L, 27), False)
     t1d = torch.nn.functional.one_hot(torch.full((n_templ, L), 20).long(), num_classes=21).float()  # all gaps
@@ -534,7 +539,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
 
             pred_lddt = None
 
-            # xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], globin_mask_t[0, 0, :, :], sigma=1e-1).unsqueeze(0)
+            new_xyz = util.realign_missing(new_xyz[0, :, :, :], globin_mask_t[0, 0, :, :], sigma=1e-4).unsqueeze(0)
             if use_template:
                 xyz_t = new_xyz[None, :, 1, :].to(xyz_t)
                 mask_t = globin_mask_t
@@ -581,6 +586,7 @@ def test_predict_globin_w_rotated_template(use_template, use_xyz_prev, use_state
                         lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
                         pae=best_pae[0].detach().cpu().numpy().astype(np.float16))
 
+
 def test_manual_split_and_dock():
     from pyrosetta import pose_from_file, init, Pose, rosetta
     from network.density import setup_docking_mover
@@ -616,7 +622,7 @@ def test_rigid_twist_dock_from_af2_model():
     dock_into_dens.apply(movable_region)
 
 
-def test_af2_pae_split():
+def test_af2_pae_split_louvain():
     import json
     import networkx as nx
     pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
@@ -626,9 +632,58 @@ def test_af2_pae_split():
         for j in range(len(pae_graph)):
             if i != j:
                 pae_graph[i][j]["weight"] = pae[i][j]
-    
+
     pae_sets = nx.algorithms.community.louvain.louvain_communities(pae_graph, resolution=1.003)
     for pae_set in pae_sets:
         print(pae_set)
 
 
+def test_af2_pae_split_greedy():
+    import json
+    pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
+    pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
+    first_best_slice: slice = split_by_pae(pae_array, min_split_length=100)
+    print(first_best_slice)
+
+
+def split_by_pae(pae_array: np.ndarray, min_split_length: int) -> list[int]:
+    chain_length = pae_array.shape[0]
+    assert pae_array.shape[1] == chain_length
+    if chain_length < min_split_length:
+        return [0, chain_length]
+
+    best_pae_region_scale_factor = 0
+    best_region_slice = slice(0, chain_length)
+    for start_idx in range(chain_length - min_split_length):
+        for end_idx in range(start_idx + min_split_length, chain_length):
+            region_slice = slice(start_idx, end_idx)
+            avg_inter_split_pae = np.mean(pae_array[region_slice, region_slice])
+            first_cross_terms = np.delete(pae_array[region_slice], region_slice, axis=0)
+            second_cross_terms = np.delete(pae_array, region_slice, axis=0)[region_slice]
+            avg_intra_split_pae = (first_cross_terms.sum() + second_cross_terms.sum()) / (
+                        first_cross_terms.size + second_cross_terms.size)
+            pae_region_scale_factor = avg_inter_split_pae / (avg_intra_split_pae + 1e-9)
+            if pae_region_scale_factor > best_pae_region_scale_factor:
+                best_region_slice = region_slice
+                best_pae_region_scale_factor = pae_region_scale_factor
+
+    best_region_before = split_by_pae(pae_array[0:best_region_slice.start, 0:best_region_slice.start], min_split_length)
+    best_region_after_zero_idx = split_by_pae(pae_array[best_region_slice.stop:, best_region_slice.stop:], min_split_length)
+    best_region_after = [split_pt + best_region_slice.stop for split_pt in best_region_after_zero_idx]
+    # best_region_before.append(best_region_slice.start)
+    # best_region_before.append(best_region_slice.stop)
+    best_region_before.extend(best_region_after)
+    return best_region_before
+
+
+def test_split_by_pae():
+    first_region_size = 10
+    second_region_size = 5
+    first_region = np.ones((first_region_size, first_region_size))
+    second_region = np.ones((second_region_size, second_region_size))
+    block_matrix = np.block([
+        [first_region, np.zeros((first_region_size, second_region_size))],
+        [np.zeros((second_region_size, first_region_size)), second_region]
+    ])
+
+    print(split_by_pae(block_matrix, min_split_length=7))
