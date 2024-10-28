@@ -962,19 +962,18 @@ def find_slice(
     best_score = -float("inf")
     best_slice: Union[None, slice] = None
     best_slice_length = 0
-    for start_idx in range(search_start_idx, search_end_idx):
-        for end_idx in range(start_idx, search_end_idx + 1):
+    for start_idx in range(search_start_idx, search_end_idx - min_slice_size + 1):
+        for end_idx in range(start_idx + min_slice_size, search_end_idx + 1):
             test_slice_length = end_idx - start_idx
-            if test_slice_length >= min_slice_size:
-                test_slice = slice(start_idx, end_idx)
-                score: int = score_fn(my_list, test_slice)
-                if score > best_score:
-                    best_score = score
-                    best_slice = test_slice
-                elif score == best_score and test_slice_length > best_slice_length:
-                    best_score = score
-                    best_slice = test_slice
-                    best_slice_length = test_slice_length
+            test_slice = slice(start_idx, end_idx)
+            score: int = score_fn(my_list, test_slice)
+            if score > best_score:
+                best_score = score
+                best_slice = test_slice
+            elif score == best_score and test_slice_length > best_slice_length:
+                best_score = score
+                best_slice = test_slice
+                best_slice_length = test_slice_length
 
     return best_slice, best_score
 
