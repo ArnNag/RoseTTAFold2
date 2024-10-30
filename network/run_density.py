@@ -23,9 +23,24 @@ torch.backends.cuda.preferred_linalg_library(
     "emd_14914",
 )
 
+def nan_check_hook(module, inputs):
+    def check_tensor(tensor, name):
+        if isinstance(tensor, torch.Tensor) and torch.isnan(tensor).any():
+            raise RuntimeError(f"NaN detected in {name} to {type(module).__name__}")
+
+    if isinstance(inputs, tuple):
+        for idx, input_tensor in enumerate(inputs):
+            check_tensor(input_tensor, f"input[{idx}]")
+    else:
+        check_tensor(inputs, "input")
 
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
+
+for name, module in pred.model.named_modules():
+    if not isinstance(module, torch.jit.ScriptModule):
+        module.register_forward_pre_hook(nan_check_hook)
+
 symm = "C1"
 nseqs_full = 2048
 n_templ = 1
