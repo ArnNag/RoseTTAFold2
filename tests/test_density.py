@@ -845,7 +845,7 @@ def test_af2_pae_split_greedy():
 
     pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
     pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
-    first_best_slice: list[int] = split_by_pae(pae_array, min_split_length=100)
+    first_best_slice: list[int] = split_by_pae(pae_array, min_split_length=0)
     print(first_best_slice)
 
 
@@ -878,26 +878,38 @@ def split_by_pae(
 
         best_pae_region_scale_factor = -float("inf")
         best_region_slice = None
-        for start_idx in range(search_start_idx, search_end_idx - min_split_length):
-            for end_idx in range(start_idx + min_split_length, search_end_idx):
+        best_region_length = -1
+        for start_idx in range(search_start_idx, search_end_idx - min_split_length + 1):
+            for end_idx in range(start_idx + min_split_length, search_end_idx + 1):
                 assert end_idx - start_idx >= min_split_length
                 region_slice = slice(start_idx, end_idx)
                 avg_inter_split_pae = np.mean(pae_array[region_slice, region_slice])
-                first_cross_terms = np.delete(
-                    pae_array[region_slice], region_slice, axis=0
-                )
-                second_cross_terms = np.delete(pae_array, region_slice, axis=0)[
-                    region_slice
-                ]
+                first_cross_term = pae_array[region_slice, 0:start_idx]
+                second_cross_term = pae_array[region_slice, end_idx:]
+                third_cross_term = pae_array[0:start_idx, region_slice]
+                fourth_cross_term = pae_array[end_idx:, region_slice]
                 avg_intra_split_pae = (
-                    first_cross_terms.sum() + second_cross_terms.sum()
-                ) / (first_cross_terms.size + second_cross_terms.size)
+                    first_cross_term.sum()
+                    + second_cross_term.sum()
+                    + third_cross_term.sum()
+                    + fourth_cross_term.sum()
+                ) / (
+                    first_cross_term.size
+                    + second_cross_term.size
+                    + third_cross_term.size
+                    + fourth_cross_term.size
+                )
                 pae_region_scale_factor = avg_inter_split_pae / (
                     avg_intra_split_pae + 1e-9
                 )
-                if pae_region_scale_factor > best_pae_region_scale_factor:
+                test_region_length = region_slice.stop - region_slice.start
+                if pae_region_scale_factor > best_pae_region_scale_factor or (
+                    pae_region_scale_factor == best_pae_region_scale_factor
+                    and test_region_length > best_region_length
+                ):
                     best_region_slice = region_slice
                     best_pae_region_scale_factor = pae_region_scale_factor
+                    best_region_length = test_region_length
 
         assert best_region_slice is not None
         assert best_region_slice.stop <= search_end_idx
@@ -915,8 +927,8 @@ def split_by_pae(
             search_end_idx=search_end_idx,
             depth=depth + 1,
         )
-        best_region_before.append(best_region_slice.start)
-        # best_region_before.append(best_region_slice.stop)
+        # best_region_before.append(best_region_slice.start)
+        best_region_before.append(best_region_slice.stop)
         best_region_before.extend(best_region_after)
         return best_region_before
 
@@ -927,7 +939,7 @@ def split_by_pae(
 
 def test_split_by_pae():
 
-    block_sizes = [7, 5]
+    block_sizes = [7, 3, 3, 5]
     total_size = sum(block_sizes)
     block_matrix = np.zeros((total_size, total_size))
     current_index = 0
@@ -948,45 +960,89 @@ def simple_score_fn(my_list: list, my_slice: slice) -> int:
     return sum(sliced_list) - len(sliced_list)
 
 
-def find_slice(
+def find_best_slice(
     score_fn: Callable[[list, slice], int],
     my_list: list,
     min_slice_size: int,
     search_start_idx: int,
     search_end_idx: int,
-) -> tuple[slice, int]:
+) -> slice:
     """
     Return the slice of my_list with the best score as computed by score_fn. Defaults to the longest slice if there
     is a tie in score. Defaults to the leftmost slice if there is a tie in both score and length.
     """
     best_score = -float("inf")
     best_slice: Union[None, slice] = None
-    best_slice_length = 0
+    best_slice_length = -1
+    print(f"{search_start_idx=}")
+    print(f"{search_end_idx=}")
+    print("starting loop")
     for start_idx in range(search_start_idx, search_end_idx - min_slice_size + 1):
         for end_idx in range(start_idx + min_slice_size, search_end_idx + 1):
+            print(f"{start_idx=}")
+            print(f"{end_idx=}")
             test_slice_length = end_idx - start_idx
             test_slice = slice(start_idx, end_idx)
             score: int = score_fn(my_list, test_slice)
-            if score > best_score:
-                best_score = score
-                best_slice = test_slice
-            elif score == best_score and test_slice_length > best_slice_length:
+            if score > best_score or (
+                score == best_score and test_slice_length > best_slice_length
+            ):
                 best_score = score
                 best_slice = test_slice
                 best_slice_length = test_slice_length
 
-    return best_slice, best_score
+    return best_slice
+
+
+def find_all_slices(
+    score_fn: Callable[[list, slice], int],
+    my_list: list,
+    min_slice_size: int,
+    search_start_idx: int,
+    search_end_idx: int,
+) -> list[int]:
+
+    if search_end_idx - search_start_idx <= min_slice_size:
+        return [search_start_idx]
+
+    best_slice: slice = find_best_slice(
+        score_fn, my_list, min_slice_size, search_start_idx, search_end_idx
+    )
+    print("left call")
+    best_slices_before: list[int] = find_all_slices(
+        score_fn, my_list, min_slice_size, search_start_idx, best_slice.start
+    )
+    print("right call")
+    best_slices_after: list[int] = find_all_slices(
+        score_fn, my_list, min_slice_size, best_slice.stop, search_end_idx
+    )
+
+    best_slices_before.append(best_slice.start)
+    # best_slices_before.append(best_slice.stop)
+    best_slices_before.extend(best_slices_after)
+
+    return best_slices_before
 
 
 def test_find_slice_with_best_score():
     my_list = [0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 2, 2, 2]
     print(len(my_list))
     # print(find_slice(score_fn=simple_score_fn, my_list=my_list, min_slice_size=0, search_start_idx=0, search_end_idx=len(my_list)))
+    # print(
+    #     find_best_slice(
+    #         score_fn=simple_score_fn,
+    #         my_list=my_list,
+    #         min_slice_size=5,
+    #         search_start_idx=8,
+    #         search_end_idx=len(my_list),
+    #     )
+    # )
+
     print(
-        find_slice(
+        find_all_slices(
             score_fn=simple_score_fn,
             my_list=my_list,
-            min_slice_size=5,
+            min_slice_size=3,
             search_start_idx=8,
             search_end_idx=len(my_list),
         )
