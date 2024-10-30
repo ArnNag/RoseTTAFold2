@@ -4,7 +4,7 @@ import util
 import glob
 
 from pyrosetta import *
-init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
+# init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
 
 params = {
     "PLDDT_CUT": 0.6, # remove residues below this plddt

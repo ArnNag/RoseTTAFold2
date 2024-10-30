@@ -1,4 +1,4 @@
-name: RF2
+name: rf2-gpu
 channels:
   - pytorch
   - nvidia
@@ -7,14 +7,13 @@ channels:
   - bioconda
   - pyg
   - http://conda.rosettacommons.org
-  - dglteam/label/cu121
 dependencies:
-  - python=3.10
+  - python
   - pip
   - requests
-  - pytorch==2.2
-  - pytorch-cuda==12.1
-  - dgl==2.0.0.cu121
+  - pytorch
+  - pytorch-cuda
+  - dgl
   - pandas
   - pyg
   - hhsuite
