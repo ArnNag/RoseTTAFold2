@@ -840,13 +840,31 @@ def test_af2_pae_split_louvain():
         print(pae_set)
 
 
-def test_af2_pae_split_greedy():
-    import json
-
-    pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
-    pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
-    first_best_slice: list[int] = split_by_pae(pae_array, min_split_length=0)
-    print(first_best_slice)
+def inter_vs_intra_pae_score(pae_array: np.ndarray, test_slice: slice) -> float:
+    assert test_slice.start >= 0
+    assert test_slice.stop <= pae_array.shape[0]
+    avg_inter_split_pae = np.mean(pae_array[test_slice, test_slice])
+    first_cross_term = pae_array[test_slice, 0:test_slice.start]
+    second_cross_term = pae_array[test_slice, test_slice.stop:]
+    third_cross_term = pae_array[0:test_slice.start, test_slice]
+    fourth_cross_term = pae_array[test_slice.stop:, test_slice]
+    avg_intra_split_pae = (
+                                  first_cross_term.sum()
+                                  + second_cross_term.sum()
+                                  + third_cross_term.sum()
+                                  + fourth_cross_term.sum()
+                          ) / (
+                                  first_cross_term.size
+                                  + second_cross_term.size
+                                  + third_cross_term.size
+                                  + fourth_cross_term.size
+                          )
+    # ic(avg_inter_split_pae)
+    pae_region_scale_factor = avg_intra_split_pae / (
+            avg_inter_split_pae + 1e-9
+    )
+    # ic(avg_intra_split_pae)
+    return pae_region_scale_factor
 
 
 def split_by_pae(
@@ -857,6 +875,7 @@ def split_by_pae(
     chain_length = pae_array.shape[0]
     assert pae_array.shape[1] == chain_length
     assert chain_length >= min_split_length
+    assert min_split_length > 0
 
     def split_by_pae_for_region(
         search_start_idx: int,
@@ -870,83 +889,85 @@ def split_by_pae(
         assert chain_length >= search_end_idx
         assert search_end_idx >= search_start_idx
 
-        if (
-            search_end_idx == search_start_idx
-            or search_start_idx + min_split_length >= search_end_idx
-        ):
+        if search_start_idx + min_split_length >= search_end_idx:
+            eprint("base case reached")
             return []
 
         best_pae_region_scale_factor = -float("inf")
-        best_region_slice = None
-        best_region_length = -1
+        best_slice = None
+        best_slice_length = -1
         for start_idx in range(search_start_idx, search_end_idx - min_split_length + 1):
             for end_idx in range(start_idx + min_split_length, search_end_idx + 1):
                 assert end_idx - start_idx >= min_split_length
-                region_slice = slice(start_idx, end_idx)
-                avg_inter_split_pae = np.mean(pae_array[region_slice, region_slice])
-                first_cross_term = pae_array[region_slice, 0:start_idx]
-                second_cross_term = pae_array[region_slice, end_idx:]
-                third_cross_term = pae_array[0:start_idx, region_slice]
-                fourth_cross_term = pae_array[end_idx:, region_slice]
-                avg_intra_split_pae = (
-                    first_cross_term.sum()
-                    + second_cross_term.sum()
-                    + third_cross_term.sum()
-                    + fourth_cross_term.sum()
-                ) / (
-                    first_cross_term.size
-                    + second_cross_term.size
-                    + third_cross_term.size
-                    + fourth_cross_term.size
-                )
-                pae_region_scale_factor = avg_inter_split_pae / (
-                    avg_intra_split_pae + 1e-9
-                )
-                test_region_length = region_slice.stop - region_slice.start
+                test_slice = slice(start_idx, end_idx)
+                test_slice_length = end_idx - start_idx
+                pae_region_scale_factor: float = inter_vs_intra_pae_score(pae_array, test_slice)
                 if pae_region_scale_factor > best_pae_region_scale_factor or (
                     pae_region_scale_factor == best_pae_region_scale_factor
-                    and test_region_length > best_region_length
+                    and test_slice_length > best_slice_length
                 ):
-                    best_region_slice = region_slice
+                    best_slice = test_slice
                     best_pae_region_scale_factor = pae_region_scale_factor
-                    best_region_length = test_region_length
+                    best_slice_length = test_slice_length
 
-        assert best_region_slice is not None
-        assert best_region_slice.stop <= search_end_idx
-        assert best_region_slice.start >= search_start_idx
+        ic(best_slice)
+        assert best_slice is not None
+        assert best_slice.stop <= search_end_idx
+        assert best_slice.start >= search_start_idx
 
         eprint("left call")
-        best_region_before = split_by_pae_for_region(
+        best_slice_before = split_by_pae_for_region(
             search_start_idx=search_start_idx,
-            search_end_idx=best_region_slice.start,
+            search_end_idx=best_slice.start,
             depth=depth + 1,
         )
+
         eprint("right call")
-        best_region_after = split_by_pae_for_region(
-            search_start_idx=best_region_slice.stop,
+        best_slice_after = split_by_pae_for_region(
+            search_start_idx=best_slice.stop,
             search_end_idx=search_end_idx,
             depth=depth + 1,
         )
-        # best_region_before.append(best_region_slice.start)
-        best_region_before.append(best_region_slice.stop)
-        best_region_before.extend(best_region_after)
-        return best_region_before
+
+        best_slice_before.append(best_slice.stop)
+        best_slice_before.extend(best_slice_after)
+        return best_slice_before
 
     return split_by_pae_for_region(
         search_start_idx=0, search_end_idx=chain_length, depth=0
     )
 
 
+def test_af2_pae_split_greedy():
+    import json
+
+    pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
+    pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
+    first_best_slice: list[int] = split_by_pae(pae_array, min_split_length=100)
+    print(first_best_slice)
+
+
+def test_manual_pae_score():
+    import json
+    pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
+    pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
+    pae_region_scale_factor = inter_vs_intra_pae_score(pae_array, slice(0, 453))
+    other_pae_region_scale_factor = inter_vs_intra_pae_score(pae_array, slice(315, 453))
+    print(pae_region_scale_factor)
+    print(other_pae_region_scale_factor)
+
+
+
 def test_split_by_pae():
 
-    block_sizes = [7, 3, 3, 5]
+    block_sizes = [7, 3, 4, 5]
     total_size = sum(block_sizes)
-    block_matrix = np.zeros((total_size, total_size))
+    block_matrix = np.ones((total_size, total_size))
     current_index = 0
     for size in block_sizes:
         block_matrix[
             current_index : current_index + size, current_index : current_index + size
-        ] = np.ones((size, size))
+        ] = np.zeros((size, size))
         current_index += size
 
     print(split_by_pae(block_matrix, min_split_length=5))
