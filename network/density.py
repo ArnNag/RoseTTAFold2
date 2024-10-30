@@ -1,6 +1,5 @@
 import os
 import torch
-import numpy as np
 from icecream import ic
 
 import util
@@ -83,12 +82,11 @@ def multidock_model(allfiles: list[str], mapfile: str) -> rosetta.core.pose.Pose
 
 
 def split_by_pae(
-        pae_array: np.ndarray,
+        pae_array: torch.Tensor,
         min_split_length: int,
 ) -> list[int]:
 
     chain_length = pae_array.shape[0]
-    ic(pae_array.shape)
     assert pae_array.shape[1] == chain_length
     assert chain_length >= min_split_length
     assert min_split_length > 0
@@ -98,7 +96,7 @@ def split_by_pae(
         assert test_slice.start >= 0
         assert test_slice.stop <= pae_array.shape[0]
 
-        avg_inter_split_pae = np.mean(pae_array[test_slice, test_slice])
+        avg_inter_split_pae = torch.mean(pae_array[test_slice, test_slice])
         first_cross_term = pae_array[test_slice, 0:test_slice.start]
         second_cross_term = pae_array[test_slice, test_slice.stop:]
         third_cross_term = pae_array[0:test_slice.start, test_slice]
@@ -110,10 +108,10 @@ def split_by_pae(
                                       + third_cross_term.sum()
                                       + fourth_cross_term.sum()
                               ) / (
-                                      first_cross_term.size
-                                      + second_cross_term.size
-                                      + third_cross_term.size
-                                      + fourth_cross_term.size
+                                      first_cross_term.numel()
+                                      + second_cross_term.numel()
+                                      + third_cross_term.numel()
+                                      + fourth_cross_term.numel()
                               )
 
         pae_region_scale_factor = avg_intra_split_pae / (
