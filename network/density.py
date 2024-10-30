@@ -3,12 +3,12 @@ import torch
 import numpy as np
 from icecream import ic
 
-from network import util
+import util
 import glob
 
 from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init, Pose
 
-from network.parsers import parse_pdb_w_seq
+from parsers import parse_pdb_w_seq
 
 init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
 
@@ -88,6 +88,7 @@ def split_by_pae(
 ) -> list[int]:
 
     chain_length = pae_array.shape[0]
+    ic(pae_array.shape)
     assert pae_array.shape[1] == chain_length
     assert chain_length >= min_split_length
     assert min_split_length > 0

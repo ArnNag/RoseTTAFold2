@@ -226,18 +226,27 @@ with torch.no_grad():
         remaining_residues = torch.arange(100)
         if map_name is not None:
             from pyrosetta import rosetta, Pose, pose_from_pdb
+            from density import split_by_pae
             import shutil
             mapfile = f"map/{map_name}.map"
-            before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}.pdb"
-            ic()
-            ic(before_dock_file)
-            util.writepdb(before_dock_file, xyz_prev[0], seq[0], Ls, bfacts=100 * pred_lddt[0])
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-            pose_before_fit: Pose = pose_from_pdb(before_dock_file)
-            dock_into_dens.apply(pose_before_fit)
-            after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}.pdb"
-            shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
-            new_xyz = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(xyz_prev).unsqueeze(0)
+            new_xyz = torch.zeros_like(xyz_prev).unsqueeze(0)
+            splits: list[int] = split_by_pae(best_pae[0], min_split_length=100)     
+            splits.insert(0, 0)
+            for split in len(splits):
+                start_idx = splits[split]
+                end_idx = splits[split + 1]
+                before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split}.pdb"
+                ic(before_dock_file)
+                util.writepdb(before_dock_file, xyz_prev[0][start_idx:end_idx], seq[0][start_idx:end_idx], [end_idx - start_idx], bfacts=100 * pred_lddt[0])
+                pose_before_fit: Pose = pose_from_pdb(before_dock_file)
+                dock_into_dens.apply(pose_before_fit)
+                after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}.pdb"
+                shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
+                new_xyz[0][start_idx:end_idx] = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0])
+
+
+
         else:
             # hard-code the new_xyz based on a provided PDB file instead of doing density fitting
             # TODO: allow a structure other than myoglobin
