@@ -859,15 +859,10 @@ def inter_vs_intra_pae_score(pae_cumsum: torch.Tensor, test_slice: slice) -> flo
     H = pae_cumsum[-1, test_slice.stop]
 
     test_slice_len = test_slice.stop - test_slice.start
-    inter_slice_size = test_slice_len ** 2
     sum_inter_split_pae = A + E - B - D
-    avg_inter_split_pae = sum_inter_split_pae / inter_slice_size
-
     sum_intra_split_pae = F + H - C - G - 2 * sum_inter_split_pae
-    avg_intra_split_pae = sum_intra_split_pae / (2 * (test_slice_len * (pae_cumsum.shape[0] - 1) - inter_slice_size))
 
     # ic(avg_inter_split_pae)
-    pae_region_scale_factor = avg_intra_split_pae / (avg_inter_split_pae + 1e-9)
     pae_region_scale_factor = (sum_intra_split_pae * test_slice_len) / ((sum_inter_split_pae + 1e-9) * (2 * (pae_cumsum.shape[0] - 1 - test_slice_len)))
     # ic(avg_intra_split_pae)
     return pae_region_scale_factor
