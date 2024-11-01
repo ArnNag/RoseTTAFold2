@@ -270,7 +270,7 @@ with torch.no_grad():
         # TODO: what is the point of the new singleton dimension (N) in xyz_prev_prev[None]?
 
         print(
-            f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f} rmsd: TODO"
+            f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f}"
         )
 
         torch.cuda.empty_cache()
@@ -311,9 +311,15 @@ with torch.no_grad():
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                 dock_into_dens.apply(pose_before_fit)
                 after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}.pdb"
+                metrics_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}"
                 shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
                 new_xyz[0][start_idx:end_idx] = torch.from_numpy(
                     parse_pdb_w_seq(after_dock_file)[0]
+                )
+                np.savez_compressed(
+                    f"{out_prefix}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}",
+                    lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
+                    pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
                 )
 
         else:
