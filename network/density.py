@@ -19,16 +19,16 @@ params = {
 
 def setup_docking_mover(counts) -> rosetta.protocols.electron_density.DockFragmentsIntoDensityMover:
     dock_into_dens = rosetta.protocols.electron_density.DockFragmentsIntoDensityMover()
-    dock_into_dens.setB(16)
+    dock_into_dens.setB(2)
     dock_into_dens.setGridStep(1)
-    dock_into_dens.setTopN(500, 10 * counts, 5 * counts)
+    dock_into_dens.setTopN(1, 1, 1)
     dock_into_dens.setMinDist(3)
     dock_into_dens.setNCyc(1)
     dock_into_dens.setClusterRadius(3)
     dock_into_dens.setFragDens(0.9)
     dock_into_dens.setMinBackbone(False)
-    dock_into_dens.setDoRefine(True)
-    dock_into_dens.setMaxRotPerTrans(10)
+    dock_into_dens.setDoRefine(False)
+    dock_into_dens.setMaxRotPerTrans(1)
     dock_into_dens.setPointRadius(5)
     dock_into_dens.setConvoluteSingleR(False)
     dock_into_dens.setLaplacianOffset(0)
@@ -90,34 +90,34 @@ def split_by_pae(
     assert pae_array.shape[1] == chain_length
     assert chain_length >= min_split_length
     assert min_split_length > 0
+    
+    pae_cumsum_rows = torch.cumsum(pae_array, dim=0)
+    pae_cumsum = torch.cumsum(pae_cumsum_rows, dim=1)
+    from torch.nn import functional
+    pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
 
     def inter_vs_intra_pae_score(test_slice: slice) -> float:
 
-        assert test_slice.start >= 0
-        assert test_slice.stop <= pae_array.shape[0]
+        # The letters below represent the cumulative sum of the region as well as the regions to the top and left.
+        # | A | B | C |
+        # | D | E | F |
+        # | G | H | I |
 
-        avg_inter_split_pae = torch.mean(pae_array[test_slice, test_slice])
-        first_cross_term = pae_array[test_slice, 0:test_slice.start]
-        second_cross_term = pae_array[test_slice, test_slice.stop:]
-        third_cross_term = pae_array[0:test_slice.start, test_slice]
-        fourth_cross_term = pae_array[test_slice.stop:, test_slice]
+        A = pae_cumsum[test_slice.start, test_slice.start]
+        B = pae_cumsum[test_slice.start, test_slice.stop]
+        C = pae_cumsum[test_slice.start, -1]
+        D = pae_cumsum[test_slice.stop, test_slice.start]
+        E = pae_cumsum[test_slice.stop, test_slice.stop]
+        F = pae_cumsum[test_slice.stop, -1]
+        G = pae_cumsum[-1, test_slice.start]
+        H = pae_cumsum[-1, test_slice.stop]
 
-        avg_intra_split_pae = (
-                                      first_cross_term.sum()
-                                      + second_cross_term.sum()
-                                      + third_cross_term.sum()
-                                      + fourth_cross_term.sum()
-                              ) / (
-                                      first_cross_term.numel()
-                                      + second_cross_term.numel()
-                                      + third_cross_term.numel()
-                                      + fourth_cross_term.numel()
-                              )
+        test_slice_len = test_slice.stop - test_slice.start
+        sum_inter_split_pae = A + E - B - D
+        sum_intra_split_pae = F + H - C - G - 2 * sum_inter_split_pae
 
-        pae_region_scale_factor = avg_intra_split_pae / (
-                avg_inter_split_pae + 1e-9
-        )
-
+        pae_region_scale_factor = (sum_intra_split_pae * test_slice_len) / (
+                    (sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - test_slice_len))
         return pae_region_scale_factor
 
     def split_by_pae_for_region(

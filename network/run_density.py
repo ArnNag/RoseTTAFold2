@@ -25,8 +25,13 @@ torch.backends.cuda.preferred_linalg_library(
 
 def nan_check_hook(module, inputs):
     def check_tensor(tensor, name):
-        if isinstance(tensor, torch.Tensor) and torch.isnan(tensor).any():
-            raise RuntimeError(f"NaN detected in {name} to {type(module).__name__}")
+        if isinstance(tensor, torch.Tensor):
+            if tensor.shape[-2:] == torch.Size([27, 3]):
+                # positions tensor contains NaNs for undefined atoms. don't want to error on these.
+                if torch.isnan(tensor[...,1,:]).any():  # first atom
+                    raise RuntimeError(f"NaN detected in first atom of {name} to {type(module).__name__}")
+            elif torch.isnan(tensor).any():
+                raise RuntimeError(f"NaN detected in {name} to {type(module).__name__}")
 
     if isinstance(inputs, tuple):
         for idx, input_tensor in enumerate(inputs):
@@ -290,6 +295,7 @@ with torch.no_grad():
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
             new_xyz = torch.zeros_like(xyz_prev)
             splits: list[int] = split_by_pae(best_pae[0], min_split_length=100)
+            ic(splits)
             splits.insert(0, 0)
             for split in range(len(splits) - 1):
                 start_idx = splits[split]
