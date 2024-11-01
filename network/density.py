@@ -9,7 +9,7 @@ from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init, Pose
 
 from parsers import parse_pdb_w_seq
 
-init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
+# init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
 
 params = {
     "PLDDT_CUT": 0.6,  # remove residues below this plddt

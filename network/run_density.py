@@ -42,9 +42,9 @@ def nan_check_hook(module, inputs):
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
 
-for name, module in pred.model.named_modules():
-    if not isinstance(module, torch.jit.ScriptModule):
-        module.register_forward_pre_hook(nan_check_hook)
+# for name, module in pred.model.named_modules():
+#     if not isinstance(module, torch.jit.ScriptModule):
+#         module.register_forward_pre_hook(nan_check_hook)
 
 symm = "C1"
 nseqs_full = 2048
@@ -294,7 +294,7 @@ with torch.no_grad():
             mapfile = f"map/{map_name}.map"
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
             new_xyz = torch.zeros_like(xyz_prev)
-            splits: list[int] = split_by_pae(best_pae[0], min_split_length=100)
+            splits: list[int] = split_by_pae(best_pae[0].to(torch.float32), min_split_length=100)
             ic(splits)
             splits.insert(0, 0)
             for split in range(len(splits) - 1):
@@ -317,7 +317,7 @@ with torch.no_grad():
                     parse_pdb_w_seq(after_dock_file)[0]
                 )
                 np.savez_compressed(
-                    f"{out_prefix}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}",
+                    metrics_file,
                     lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
                     pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
                 )
