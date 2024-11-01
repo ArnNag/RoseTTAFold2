@@ -840,35 +840,40 @@ def test_af2_pae_split_louvain():
         print(pae_set)
 
 
-def inter_vs_intra_pae_score(pae_array: np.ndarray, test_slice: slice) -> float:
+def inter_vs_intra_pae_score(pae_cumsum: torch.Tensor, test_slice: slice) -> float:
     assert test_slice.start >= 0
-    assert test_slice.stop <= pae_array.shape[0]
-    avg_inter_split_pae = np.mean(pae_array[test_slice, test_slice])
-    first_cross_term = pae_array[test_slice, 0:test_slice.start]
-    second_cross_term = pae_array[test_slice, test_slice.stop:]
-    third_cross_term = pae_array[0:test_slice.start, test_slice]
-    fourth_cross_term = pae_array[test_slice.stop:, test_slice]
-    avg_intra_split_pae = (
-                                  first_cross_term.sum()
-                                  + second_cross_term.sum()
-                                  + third_cross_term.sum()
-                                  + fourth_cross_term.sum()
-                          ) / (
-                                  first_cross_term.size
-                                  + second_cross_term.size
-                                  + third_cross_term.size
-                                  + fourth_cross_term.size
-                          )
+    # assert test_slice.stop <= pae_array.shape[0]
+
+    # The letters below represent the cumulative sum of the region as well as the regions to the top and left.
+    # | A | B | C |
+    # | D | E | F |
+    # | G | H | I |
+
+    A = pae_cumsum[test_slice.start, test_slice.start]
+    B = pae_cumsum[test_slice.start, test_slice.stop]
+    C = pae_cumsum[test_slice.start, -1]
+    D = pae_cumsum[test_slice.stop, test_slice.start]
+    E = pae_cumsum[test_slice.stop, test_slice.stop]
+    F = pae_cumsum[test_slice.stop, -1]
+    G = pae_cumsum[-1, test_slice.start]
+    H = pae_cumsum[-1, test_slice.stop]
+
+    test_slice_len = test_slice.stop - test_slice.start
+    inter_slice_size = test_slice_len ** 2
+    sum_inter_split_pae = A + E - B - D
+    avg_inter_split_pae = sum_inter_split_pae / inter_slice_size
+
+    sum_intra_split_pae = F + H - C - G - 2 * sum_inter_split_pae
+    avg_intra_split_pae = sum_intra_split_pae / (2 * (test_slice_len * (pae_cumsum.shape[0] - 1) - inter_slice_size))
+
     # ic(avg_inter_split_pae)
-    pae_region_scale_factor = avg_intra_split_pae / (
-            avg_inter_split_pae + 1e-9
-    )
+    pae_region_scale_factor = avg_intra_split_pae / (avg_inter_split_pae + 1e-9)
     # ic(avg_intra_split_pae)
     return pae_region_scale_factor
 
 
 def split_by_pae(
-    pae_array: np.ndarray,
+    pae_array: torch.Tensor,
     min_split_length: int,
 ) -> list[int]:
 
@@ -876,6 +881,11 @@ def split_by_pae(
     assert pae_array.shape[1] == chain_length
     assert chain_length >= min_split_length
     assert min_split_length > 0
+
+    pae_cumsum_rows = torch.cumsum(pae_array, dim=0)
+    pae_cumsum = torch.cumsum(pae_cumsum_rows, dim=1)
+    from torch.nn import functional
+    pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
 
     def split_by_pae_for_region(
         search_start_idx: int,
@@ -901,7 +911,7 @@ def split_by_pae(
                 assert end_idx - start_idx >= min_split_length
                 test_slice = slice(start_idx, end_idx)
                 test_slice_length = end_idx - start_idx
-                pae_region_scale_factor: float = inter_vs_intra_pae_score(pae_array, test_slice)
+                pae_region_scale_factor: float = inter_vs_intra_pae_score(pae_cumsum, test_slice)
                 if pae_region_scale_factor > best_pae_region_scale_factor or (
                     pae_region_scale_factor == best_pae_region_scale_factor
                     and test_slice_length > best_slice_length
@@ -942,7 +952,7 @@ def test_af2_pae_split_greedy():
     import json
 
     pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
-    pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
+    pae_array = torch.tensor(json.load(open(pae_path))[0]["predicted_aligned_error"])
     first_best_slice: list[int] = split_by_pae(pae_array, min_split_length=100)
     print(first_best_slice)
 
@@ -962,13 +972,14 @@ def test_split_by_pae():
 
     block_sizes = [7, 3, 4, 5]
     total_size = sum(block_sizes)
-    block_matrix = np.ones((total_size, total_size))
+    block_matrix = torch.ones((total_size, total_size))
     current_index = 0
     for size in block_sizes:
         block_matrix[
             current_index : current_index + size, current_index : current_index + size
-        ] = np.zeros((size, size))
+        ] = torch.zeros((size, size))
         current_index += size
+
 
     print(split_by_pae(block_matrix, min_split_length=5))
 
@@ -1024,7 +1035,7 @@ def find_all_slices(
 ) -> list[int]:
 
     if search_end_idx - search_start_idx <= min_slice_size:
-        return [search_start_idx]
+        return []
 
     best_slice: slice = find_best_slice(
         score_fn, my_list, min_slice_size, search_start_idx, search_end_idx
@@ -1038,8 +1049,8 @@ def find_all_slices(
         score_fn, my_list, min_slice_size, best_slice.stop, search_end_idx
     )
 
-    best_slices_before.append(best_slice.start)
-    # best_slices_before.append(best_slice.stop)
+    # best_slices_before.append(best_slice.start)
+    best_slices_before.append(best_slice.stop)
     best_slices_before.extend(best_slices_after)
 
     return best_slices_before
@@ -1068,3 +1079,99 @@ def test_find_slice_with_best_score():
             search_end_idx=len(my_list),
         )
     )
+
+def test_cumsum_vs_naive_scoring():
+    block_sizes = [3, 1]
+    total_size = sum(block_sizes)
+    block_matrix = torch.ones((total_size, total_size))
+    current_index = 0
+    for size in block_sizes:
+        block_matrix[
+        current_index: current_index + size, current_index: current_index + size
+        ] = torch.zeros((size, size))
+        current_index += size
+
+    pae_cumsum_rows = torch.cumsum(block_matrix, dim=0)
+    pae_cumsum = torch.cumsum(pae_cumsum_rows, dim=1)
+    from torch.nn import functional
+    pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
+
+    test_slice = slice(1, 3)
+
+    A = pae_cumsum[test_slice.start, test_slice.start]
+    B = pae_cumsum[test_slice.start, test_slice.stop]
+    C = pae_cumsum[test_slice.start, -1]
+    D = pae_cumsum[test_slice.stop, test_slice.start]
+    E = pae_cumsum[test_slice.stop, test_slice.stop]
+    F = pae_cumsum[test_slice.stop, -1]
+    G = pae_cumsum[-1, test_slice.start]
+    H = pae_cumsum[-1, test_slice.stop]
+
+    test_slice_len = test_slice.stop - test_slice.start
+    inter_slice_size = test_slice_len ** 2
+    sum_inter_split_pae = A + E - B - D
+    avg_inter_split_pae = sum_inter_split_pae / inter_slice_size
+
+    sum_intra_split_pae = F + H - C - G - 2 * sum_inter_split_pae
+    avg_intra_split_pae = sum_intra_split_pae / (2 * (test_slice_len * (pae_cumsum.shape[0] - 1) - inter_slice_size))
+
+    avg_inter_split_pae_naive = torch.mean(block_matrix[test_slice, test_slice])
+    first_cross_term = block_matrix[test_slice, 0:test_slice.start]
+    second_cross_term = block_matrix[test_slice, test_slice.stop:]
+    third_cross_term = block_matrix[0:test_slice.start, test_slice]
+    fourth_cross_term = block_matrix[test_slice.stop:, test_slice]
+    sum_intra_split_pae_naive = first_cross_term.sum() + second_cross_term.sum() + third_cross_term.sum() + fourth_cross_term.sum()
+    avg_intra_split_pae_naive = (
+                                  first_cross_term.sum()
+                                  + second_cross_term.sum()
+                                  + third_cross_term.sum()
+                                  + fourth_cross_term.sum()
+                          ) / (
+                                  first_cross_term.numel()
+                                  + second_cross_term.numel()
+                                  + third_cross_term.numel()
+                                  + fourth_cross_term.numel()
+                          )
+
+    assert torch.isclose(torch.scalar_tensor(avg_inter_split_pae), avg_inter_split_pae_naive)
+    assert torch.isclose(sum_intra_split_pae, sum_intra_split_pae_naive)
+    assert torch.isclose(torch.scalar_tensor(avg_intra_split_pae), avg_intra_split_pae_naive)
+
+
+    naive_result = torch.scalar_tensor(inter_vs_intra_pae_score_naive(block_matrix, test_slice))
+    cumsum_result = torch.scalar_tensor(inter_vs_intra_pae_score(pae_cumsum, test_slice))
+
+    assert torch.isclose(naive_result, cumsum_result).all()
+
+
+
+    
+def inter_vs_intra_pae_score_naive(pae_array: torch.Tensor, test_slice: slice) -> float:
+
+    assert test_slice.start >= 0
+    assert test_slice.stop <= pae_array.shape[0]
+
+    avg_inter_split_pae = torch.mean(pae_array[test_slice, test_slice])
+    first_cross_term = pae_array[test_slice, 0:test_slice.start]
+    second_cross_term = pae_array[test_slice, test_slice.stop:]
+    third_cross_term = pae_array[0:test_slice.start, test_slice]
+    fourth_cross_term = pae_array[test_slice.stop:, test_slice]
+
+
+    avg_intra_split_pae = (
+                                  first_cross_term.sum()
+                                  + second_cross_term.sum()
+                                  + third_cross_term.sum()
+                                  + fourth_cross_term.sum()
+                          ) / (
+                                  first_cross_term.numel()
+                                  + second_cross_term.numel()
+                                  + third_cross_term.numel()
+                                  + fourth_cross_term.numel()
+                          )
+
+    pae_region_scale_factor = avg_intra_split_pae / (
+            avg_inter_split_pae + 1e-9
+    )
+
+    return pae_region_scale_factor
