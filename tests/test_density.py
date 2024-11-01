@@ -868,6 +868,7 @@ def inter_vs_intra_pae_score(pae_cumsum: torch.Tensor, test_slice: slice) -> flo
 
     # ic(avg_inter_split_pae)
     pae_region_scale_factor = avg_intra_split_pae / (avg_inter_split_pae + 1e-9)
+    pae_region_scale_factor = (sum_intra_split_pae * test_slice_len) / ((sum_inter_split_pae + 1e-9) * (2 * (pae_cumsum.shape[0] - 1 - test_slice_len)))
     # ic(avg_intra_split_pae)
     return pae_region_scale_factor
 
@@ -1081,7 +1082,7 @@ def test_find_slice_with_best_score():
     )
 
 def test_cumsum_vs_naive_scoring():
-    block_sizes = [3, 1]
+    block_sizes = [3, 2]
     total_size = sum(block_sizes)
     block_matrix = torch.ones((total_size, total_size))
     current_index = 0
@@ -1096,7 +1097,7 @@ def test_cumsum_vs_naive_scoring():
     from torch.nn import functional
     pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
 
-    test_slice = slice(1, 3)
+    test_slice = slice(1, 4)
 
     A = pae_cumsum[test_slice.start, test_slice.start]
     B = pae_cumsum[test_slice.start, test_slice.stop]
