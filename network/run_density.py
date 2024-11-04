@@ -1,3 +1,5 @@
+import glob
+
 import torch
 from predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
 from symmetry import symm_subunit_matrix, find_symm_subs
@@ -285,6 +287,12 @@ with torch.no_grad():
         best_pae = logits_pae.half().cpu()
         best_logit = [l.half().cpu() for l in logit_s]
         logits_pae, logit_s = None, None
+        metrics_file = f"test_{a3m_name}_{map_name}_cycle_{i_cycle}"
+        np.savez_compressed(
+            metrics_file,
+            lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
+            pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
+        )
 
         if map_name is not None:
             from pyrosetta import rosetta, Pose, pose_from_pdb
@@ -295,32 +303,46 @@ with torch.no_grad():
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
             new_xyz = torch.zeros_like(xyz_prev)
             splits: list[int] = split_by_pae(best_pae[0].to(torch.float32), min_split_length=100)
-            ic(splits)
+            print(f"{splits=}")
             splits.insert(0, 0)
             for split in range(len(splits) - 1):
                 start_idx = splits[split]
                 end_idx = splits[split + 1]
+                print(f"{split=}")
+                print(f"{start_idx=}")
+                print(f"{end_idx=}")
                 before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split}.pdb"
                 util.writepdb(
                     before_dock_file,
                     xyz_prev[0][start_idx:end_idx],
                     seq[0][start_idx:end_idx],
                     [end_idx - start_idx],
-                    bfacts=100 * pred_lddt[0],
+                    bfacts=100 * pred_lddt[0][start_idx:end_idx],
                 )
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                 dock_into_dens.apply(pose_before_fit)
                 after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}.pdb"
-                metrics_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}"
                 shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
+
+                # grab top 'count' poses
+                allfiles: list[str] = glob.glob('EMPTY_JOB_use_jd2_*.pdb')
+                allfiles.sort()
+                allfiles.pop(0)
+                for j, file in enumerate(allfiles):
+                    hit = j + 1
+                    next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}_hit_{hit}.pdb"
+                    shutil.copyfile(file, next_best_hit_file)
                 new_xyz[0][start_idx:end_idx] = torch.from_numpy(
                     parse_pdb_w_seq(after_dock_file)[0]
                 )
-                np.savez_compressed(
-                    metrics_file,
-                    lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
-                    pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
-                )
+
+            util.writepdb(
+                f"new_xyz_cycle_{i_cycle}.pdb",
+                new_xyz[0],
+                seq[0],
+                Ls,
+                bfacts=100 * pred_lddt[0],
+            )
 
         else:
             # hard-code the new_xyz based on a provided PDB file instead of doing density fitting

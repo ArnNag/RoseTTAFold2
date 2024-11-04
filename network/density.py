@@ -19,19 +19,19 @@ params = {
 
 def setup_docking_mover(counts) -> rosetta.protocols.electron_density.DockFragmentsIntoDensityMover:
     dock_into_dens = rosetta.protocols.electron_density.DockFragmentsIntoDensityMover()
-    dock_into_dens.setB(2)
-    dock_into_dens.setGridStep(1)
-    dock_into_dens.setTopN(1, 1, 1)
-    dock_into_dens.setMinDist(3)
-    dock_into_dens.setNCyc(1)
-    dock_into_dens.setClusterRadius(3)
-    dock_into_dens.setFragDens(0.9)
-    dock_into_dens.setMinBackbone(False)
-    dock_into_dens.setDoRefine(False)
-    dock_into_dens.setMaxRotPerTrans(1)
-    dock_into_dens.setPointRadius(5)
-    dock_into_dens.setConvoluteSingleR(False)
-    dock_into_dens.setLaplacianOffset(0)
+    dock_into_dens.setB( 16 )
+    dock_into_dens.setGridStep( 1 )
+    dock_into_dens.setTopN( 500 , 50*counts , 1*counts )
+    dock_into_dens.setMinDist( 3 )
+    dock_into_dens.setNCyc( 1 )
+    dock_into_dens.setClusterRadius( 3 )
+    dock_into_dens.setFragDens( 0.9 )
+    dock_into_dens.setMinBackbone( False )
+    dock_into_dens.setDoRefine( True )
+    dock_into_dens.setMaxRotPerTrans( 10 )
+    dock_into_dens.setPointRadius( 5 )
+    dock_into_dens.setConvoluteSingleR( False )
+    dock_into_dens.setLaplacianOffset( 0 )
     return dock_into_dens
 
 
