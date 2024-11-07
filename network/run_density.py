@@ -16,14 +16,18 @@ from icecream import ic
 torch.backends.cuda.preferred_linalg_library(
     backend="magma"
 )  # avoid issue with cuSOLVER when computing SVD
-(use_template, use_xyz_prev, use_state_prev, use_pair_prev, a3m_name, map_name) = (
+(use_template, use_xyz_prev, use_state_prev, use_pair_prev, use_msa, a3m_name, map_name, pdb_name) = (
     False,
     True,
     False,
     False,
-    "atpbind",
-    "emd_14914",
+    False,
+    "atpbind_atom",
+    None,
+    "atpbind"
 )
+
+assert (map_name is None) + (pdb_name is None) == 1
 
 def nan_check_hook(module, inputs):
     def check_tensor(tensor, name):
@@ -59,7 +63,7 @@ low_vram = False
 B = 1
 msa_concat_mode = "diag"
 pred.xyz_converter = pred.xyz_converter.cpu()
-out_prefix = f"test_predict_{a3m_name}_{map_name}"
+out_prefix = f"test_predict_{a3m_name}_map_{map_name}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
 ###
 # pass 1, combined MSA
@@ -118,7 +122,7 @@ xyz_prev, symmsub = find_symm_subs(xyz_prev[:, :L], symmRs, symmmeta)
 Osub = symmsub.shape[0]
 mask_t = mask_t.repeat(1, 1, Osub, 1)
 alpha_t = alpha_t.repeat(1, 1, Osub, 1)
-mask_prev = mask_t[:, 0]
+mask_prev_orig = mask_t[:, 0]
 xyz_t = xyz_t.repeat(1, 1, Osub, 1, 1)
 t1d = t1d.repeat(1, 1, Osub, 1)
 
@@ -158,15 +162,19 @@ with torch.no_grad():
 
     #
     t1d = t1d.to(pred.device).half()
+    print(f"{t1d.shape=}")
+    print(f"{t1d=}")
     t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
+    print(f"{t2d.shape=}")
+    print(f"{t2d=}")
     if not low_vram:
         t2d = t2d.to(pred.device)  # .half()
     idx_pdb = idx_pdb.to(pred.device)
     xyz_t = xyz_t[:, :, :, 1].to(pred.device)
     mask_t_2d = mask_t_2d.to(pred.device)
     alpha_t = alpha_t.to(pred.device)
-    xyz_prev = xyz_prev.to(pred.device)
-    mask_prev = mask_prev.to(pred.device)
+    mask_prev_orig = mask_prev_orig.to(pred.device)
+    mask_prev = mask_prev_orig.clone()
     same_chain = same_chain.to(pred.device)
     symmids = symmids.to(pred.device)
     symmsub = symmsub.to(pred.device)
@@ -179,9 +187,6 @@ with torch.no_grad():
     msa_prev = None
     pair_prev = None
     state_prev = None
-    mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
-    mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
-    mask_recycle = same_chain.float() * mask_recycle.float()
 
     best_lddt = torch.tensor([-1.0], device=pred.device)
     best_xyz = None
@@ -193,13 +198,18 @@ with torch.no_grad():
         from density import setup_docking_mover
 
         init(
-            "-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4"
+            "-beta -crystal_refine -mute core -multithreading:total_threads 4"
         )
         dock_into_dens: (
             rosetta.protocols.electron_density.DockFragmentsIntoDensityMover
         ) = setup_docking_mover(counts=1)
 
     for i_cycle in range(n_recycles + 1):
+
+        mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
+        mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
+        mask_recycle = same_chain.float() * mask_recycle.float()
+
         from featurizing import MSAFeaturize
 
         seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
@@ -212,6 +222,7 @@ with torch.no_grad():
         seq = seq.unsqueeze(0)
         msa_seed = msa_seed.unsqueeze(0)
         msa_extra = msa_extra.unsqueeze(0)
+        print(f"{msa_extra.shape=}")
 
         # fd memory savings
         msa_seed = msa_seed.half()  # GPU ONLY
@@ -276,10 +287,6 @@ with torch.no_grad():
         )
 
         torch.cuda.empty_cache()
-        if pred_lddt.mean() < best_lddt.mean():
-            # TODO: are B-factors modified during the docking process? should we use these instead of pLDDT?
-            pred_lddt, logits_pae, logit_s = None, None, None
-            continue
 
         best_xyz = xyz_prev
         best_logit = logit_s
@@ -294,7 +301,7 @@ with torch.no_grad():
             pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
         )
 
-        if map_name is not None:
+        if map_name is not None and i_cycle == 0:
             from pyrosetta import rosetta, Pose, pose_from_pdb
             from density import split_by_pae
             import shutil
@@ -304,14 +311,16 @@ with torch.no_grad():
             new_xyz = torch.zeros_like(xyz_prev)
             splits: list[int] = split_by_pae(best_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
-            splits.insert(0, 0)
-            for split in range(len(splits) - 1):
-                start_idx = splits[split]
-                end_idx = splits[split + 1]
-                print(f"{split=}")
+            splits_with_ends = [0]
+            splits_with_ends.extend(splits)
+            splits_with_ends.append(len(best_pae[0]))
+            for split_idx in range(len(splits_with_ends) - 1):
+                start_idx = splits_with_ends[split_idx]
+                end_idx = splits_with_ends[split_idx + 1]
+                print(f"{split_idx=}")
                 print(f"{start_idx=}")
                 print(f"{end_idx=}")
-                before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split}.pdb"
+                before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
                 util.writepdb(
                     before_dock_file,
                     xyz_prev[0][start_idx:end_idx],
@@ -321,7 +330,7 @@ with torch.no_grad():
                 )
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                 dock_into_dens.apply(pose_before_fit)
-                after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}.pdb"
+                after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
                 shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
 
                 # grab top 'count' poses
@@ -330,11 +339,30 @@ with torch.no_grad():
                 allfiles.pop(0)
                 for j, file in enumerate(allfiles):
                     hit = j + 1
-                    next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split}_hit_{hit}.pdb"
+                    next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
                 new_xyz[0][start_idx:end_idx] = torch.from_numpy(
                     parse_pdb_w_seq(after_dock_file)[0]
                 )
+
+            long_jump_threshold = 10.
+            is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
+            # default to True for either end since we want to mask fragments on the ends if the only jump they touch
+            # is longer than long_jump_threshold
+            for split_idx, split_pt in enumerate(splits, start=1):
+                assert split_pt >= 1
+                jump_dist = new_xyz[0][split_pt] - new_xyz[0][split_pt - 1]
+                print(f"{jump_dist=}")
+                is_long_jump[split_idx] = jump_dist > long_jump_threshold
+
+            new_mask_prev = torch.full_like(mask_prev_orig, True, dtype=torch.bool)
+            for split_idx in range(len(splits_with_ends) - 1):
+                start_idx = splits_with_ends[split_idx]
+                end_idx = splits_with_ends[split_idx + 1]
+                if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
+                    new_mask_prev[start_idx:end_idx] = False
+
+            # xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], new_mask_t[0, 0, :, :], sigma=1e-1).unsqueeze(0)
 
             util.writepdb(
                 f"new_xyz_cycle_{i_cycle}.pdb",
@@ -344,26 +372,35 @@ with torch.no_grad():
                 bfacts=100 * pred_lddt[0],
             )
 
-        else:
+        if pdb_name is not None:
             # hard-code the new_xyz based on a provided PDB file instead of doing density fitting
-            # TODO: allow a structure other than myoglobin
             new_xyz = torch.from_numpy(
-                parse_pdb_w_seq("pdb/rotated_structures/rotated_alpha000_beta000.pdb")[
+                parse_pdb_w_seq(f"pdb/{pdb_name}.pdb")[
                     0
                 ]
-            ).unsqueeze(0)
+            ).to(xyz_prev).unsqueeze(0)
 
         pred_lddt = None
 
-        # xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], new_mask_t[0, 0, :, :], sigma=1e-1).unsqueeze(0)
         if use_template:
-            xyz_t = new_xyz[None, :, 1, :].to(xyz_t)
+            xyz_t = new_xyz[None, :, 1, :]
         if use_xyz_prev:
-            xyz_prev = new_xyz.to(xyz_prev)
+            xyz_prev = new_xyz
         if not use_pair_prev:
             pair_prev = torch.zeros_like(pair_prev)
+            print(f"{pair_prev.shape=}")
         if not use_state_prev:
             state_prev = torch.zeros_like(state_prev)
+            print(f"{state_prev.shape=}")
+        if not use_msa:
+            msa_seed = torch.zeros_like(msa_seed)
+            print(f"{msa_seed.shape=}")
+            msa_extra = torch.zeros_like(msa_extra)
+            print(f"{msa_extra.shape=}")
+            msa_prev = torch.zeros_like(msa_prev)
+            print(f"{msa_prev.shape=}")
+            seq = torch.zeros_like(seq)
+            print(f"{seq.shape=}")
 
     # free more memory
     pair_prev, msa_prev, t2d = None, None, None
@@ -397,15 +434,14 @@ for i, li in enumerate(Ls):
         Lstartj += lj
     Lstarti += li
 
-outfile = f"{out_prefix}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_pred.pdb"
-util.writepdb(outfile, best_xyz[0], seq[0], Ls, bfacts=100 * best_lddt[0])
+util.writepdb(f"{out_prefix}.pdb", best_xyz[0], seq[0], Ls, bfacts=100 * best_lddt[0])
 
 prob_s = [
     prob.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.float16)
     for prob in prob_s
 ]
 np.savez_compressed(
-    f"{out_prefix}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}",
+    out_prefix,
     dist=prob_s[0].astype(np.float16),
     lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
     pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
