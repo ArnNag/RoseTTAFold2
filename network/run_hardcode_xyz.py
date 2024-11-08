@@ -1,3 +1,4 @@
+from icecream import ic
 import torch
 import os
 from predict import Predictor, pae_unbin
@@ -8,8 +9,8 @@ from chemical import INIT_CRDS
 from kinematics import xyz_to_t2d
 
 use_template = True
-pdb_name = "atpbind"
-a3m_name = "atpbind_atom" # only used to get sequence
+pdb_name = "globin"
+a3m_name = "globin" # only used to get sequence
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
 
@@ -21,7 +22,7 @@ a3m = f"a3m/{a3m_name}.a3m"
 msa, ins, Ls = parse_a3m(a3m)
 msa = torch.tensor(msa).long()
 ins = torch.tensor(ins).long()
-nseqs = 256
+nseqs = 16
 actual_seq = msa[0].unsqueeze(0)
 
 pdb_path = f"pdb/{pdb_name}.pdb"
@@ -34,12 +35,23 @@ L = Ls[0]
 
 if use_template:
     xyz_t, t1d, mask_t = read_template_pdb(L, pdb_path, align_conf=1.0)
-    mask_t = mask_t.unsqueeze(0)
+    xyz_t = xyz_t.unsqueeze(0).to(pred.device)
+    mask_t = mask_t.unsqueeze(0).to(pred.device)
+    t1d = t1d.unsqueeze(0).to(pred.device)
     mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
     mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
     t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
-    xyz_t = xyz_t.to(pred.device)
-    t1d = t1d.to(pred.device)
+    seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
+    alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
+        xyz_t.reshape(-1, L, 27, 3), seq_tmp, mask_in=mask_t.reshape(-1, L, 27)
+    )
+    xyz_t = xyz_t[:, :, :, 1].to(pred.device)
+    alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
+
+    alpha[torch.isnan(alpha)] = 0.0
+    alpha = alpha.reshape(1, -1, L, 10, 2)
+    alpha_mask = alpha_mask.reshape(1, -1, L, 10, 1)
+    alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
 else:
     # dummy template
     n_templ = 1
@@ -54,7 +66,7 @@ else:
     xyz_t = xyz_t[:, :, :, 1].to(pred.device)
     t1d = torch.zeros(1, 1, L, 22).to(pred.device)
     t2d = torch.zeros(1, 1, L, L, 44).to(pred.device)
-    mask_t = torch.zeros(1, 1, L, L).to(pred.device)
+    mask_t_2d = torch.zeros(1, 1, L, L).to(pred.device)
 
 L = Ls[0]
 msa_seed = torch.zeros(1, nseqs, L, 48).to(pred.device)
@@ -85,8 +97,8 @@ with torch.cuda.amp.autocast(True):
         t1d=t1d,
         t2d=t2d,
         xyz_t=xyz_t,
-        alpha_t=None,
-        mask_t=mask_t,
+        alpha_t=alpha_t,
+        mask_t=mask_t_2d,
         same_chain=None,
         msa_prev=None,
         pair_prev=None,
