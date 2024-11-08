@@ -1,6 +1,8 @@
 from icecream import ic
 import torch
 import os
+
+import util
 from predict import Predictor, pae_unbin
 from parsers import parse_a3m, parse_pdb_w_seq, read_template_pdb
 import numpy as np
@@ -17,12 +19,13 @@ pred = Predictor(model, torch.device("cuda:0"))
 pred.model.eval()
 
 pred.xyz_converter = pred.xyz_converter.to(pred.device)
+pred.lddt_bins = pred.lddt_bins.to(pred.device)
 
 a3m = f"a3m/{a3m_name}.a3m"
 msa, ins, Ls = parse_a3m(a3m)
 msa = torch.tensor(msa).long()
 ins = torch.tensor(ins).long()
-nseqs = 16
+nseqs = 256
 actual_seq = msa[0].unsqueeze(0)
 
 pdb_path = f"pdb/{pdb_name}.pdb"
@@ -45,7 +48,7 @@ if use_template:
     alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
         xyz_t.reshape(-1, L, 27, 3), seq_tmp, mask_in=mask_t.reshape(-1, L, 27)
     )
-    xyz_t = xyz_t[:, :, :, 1].to(pred.device)
+    xyz_t = xyz_t[:, :, :, 1]
     alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
 
     alpha[torch.isnan(alpha)] = 0.0
@@ -110,7 +113,8 @@ with torch.cuda.amp.autocast(True):
         symmmeta=None,
         striping=None,
     )
-    xyz_prev = xyz_prev[-1].to(actual_seq.device)
+    xyz_prev = xyz_prev[-1]
+    alpha = alpha[-1]
     _, xyz_prev = pred.xyz_converter.compute_all_atom(actual_seq, xyz_prev, alpha)
 
 pred_lddt = nn.Softmax(dim=1)(pred_lddt.half()) * pred.lddt_bins[None, :, None]
@@ -120,6 +124,7 @@ logits_pae = pae_unbin(logits_pae.half())
 print(
     f"plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f}"
 )
+util.writepdb(f"hardcode_{pdb_name}.pdb", xyz_prev[0], actual_seq[0], Ls, bfacts=100 * pred_lddt[0])
 
 torch.cuda.empty_cache()
 
