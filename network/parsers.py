@@ -137,10 +137,10 @@ def parse_pdb_lines(lines):
     return xyz,mask,np.array(idx_s)
 
 def parse_pdb_w_seq(filename, chnid=None):
-    lines = open(filename,'r').readlines()
+    lines: list[str] = open(filename,'r').readlines()
     return parse_pdb_lines_w_seq(lines)
 
-def parse_pdb_lines_w_seq(lines, chnid=None):
+def parse_pdb_lines_w_seq(lines: list[str], chnid=None):
     # indices of residues observed in the structure
     #idx_s = [int(l[22:26]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
     res = [(l[22:26],l[17:20]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
@@ -245,7 +245,7 @@ def parse_templates(item, params):
 def parse_templates_raw(ffdb, hhr_fn, atab_fn, templ_to_use, max_templ=20):
     # process tabulated hhsearch output to get
     # matched positions and positional scores
-    hits = []
+    hits: list[list] = []
     read_stat = False
     for l in open(atab_fn, "r").readlines():
         if l[0]=='>':
@@ -271,11 +271,11 @@ def parse_templates_raw(ffdb, hhr_fn, atab_fn, templ_to_use, max_templ=20):
     for hi in hits:
         #if hi[0] not in ffids:
         #    continue
-        entry = get_entry_by_name(hi[0], ffdb.index)
-        if entry == None:
+        entry: FFindexEntry | None = get_entry_by_name(hi[0], ffdb.index)
+        if entry is None:
             print ("Failed to find %s in *_pdb.ffindex"%hi[0])
             continue
-        data = read_entry_lines(entry, ffdb.data)
+        data: list[str] = read_entry_lines(entry, ffdb.data)
         hi += list(parse_pdb_lines_w_seq(data)) # (add four more items)
 
     # process hits

@@ -17,11 +17,11 @@ torch.backends.cuda.preferred_linalg_library(
     backend="magma"
 )  # avoid issue with cuSOLVER when computing SVD
 (use_template, use_xyz_prev, use_state_prev, use_pair_prev, use_msa, a3m_name, map_name, pdb_name) = (
-    False,
+    True,
+    True,
     True,
     False,
-    False,
-    False,
+    True,
     "atpbind_atom",
     None,
     "atpbind"
@@ -382,25 +382,20 @@ with torch.no_grad():
 
         pred_lddt = None
 
-        if use_template:
-            xyz_t = new_xyz[None, :, 1, :]
-        if use_xyz_prev:
-            xyz_prev = new_xyz
-        if not use_pair_prev:
-            pair_prev = torch.zeros_like(pair_prev)
-            print(f"{pair_prev.shape=}")
-        if not use_state_prev:
-            state_prev = torch.zeros_like(state_prev)
-            print(f"{state_prev.shape=}")
-        if not use_msa:
-            msa_seed = torch.zeros_like(msa_seed)
-            print(f"{msa_seed.shape=}")
-            msa_extra = torch.zeros_like(msa_extra)
-            print(f"{msa_extra.shape=}")
-            msa_prev = torch.zeros_like(msa_prev)
-            print(f"{msa_prev.shape=}")
-            seq = torch.zeros_like(seq)
-            print(f"{seq.shape=}")
+        if i_cycle == 0:
+            if use_template:
+                xyz_t = new_xyz[None, :, 1, :]
+            if use_xyz_prev:
+                xyz_prev = new_xyz
+            if not use_pair_prev:
+                pair_prev = torch.zeros_like(pair_prev)
+            if not use_state_prev:
+                state_prev = torch.zeros_like(state_prev)
+            if not use_msa:
+                msa_seed = torch.zeros_like(msa_seed)
+                msa_extra = torch.zeros_like(msa_extra)
+                msa_prev = torch.zeros_like(msa_prev)
+                seq = torch.zeros_like(seq)
 
     # free more memory
     pair_prev, msa_prev, t2d = None, None, None

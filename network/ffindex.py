@@ -12,10 +12,11 @@ import sys
 import mmap
 from collections import namedtuple
 
+FFindexDB = namedtuple("FFindexDB", "index, data")
 FFindexEntry = namedtuple("FFindexEntry", "name, offset, length")
 
 
-def read_index(ffindex_filename):
+def read_index(ffindex_filename) -> list[FFindexEntry]:
     entries = []
     
     fh = open(ffindex_filename)
@@ -27,23 +28,23 @@ def read_index(ffindex_filename):
     return entries
 
 
-def read_data(ffdata_filename):
+def read_data(ffdata_filename) -> mmap.mmap:
     fh = open(ffdata_filename, "rb")
-    data = mmap.mmap(fh.fileno(), 0, prot=mmap.PROT_READ)
+    data: mmap.mmap = mmap.mmap(fh.fileno(), 0, prot=mmap.PROT_READ)
     fh.close()
     return data
 
 
-def get_entry_by_name(name, index):
+def get_entry_by_name(name, index) -> FFindexEntry | None:
     #TODO: bsearch
     for entry in index:
-        if(name == entry.name):
+        if name == entry.name:
             return entry
     return None
 
 
-def read_entry_lines(entry, data):
-    lines = data[entry.offset:entry.offset + entry.length - 1].decode("utf-8").split("\n")
+def read_entry_lines(entry: FFindexEntry, data: mmap.mmap) -> list[str]:
+    lines: list[str] = data[entry.offset:entry.offset + entry.length - 1].decode("utf-8").split("\n")
     return lines
 
 
