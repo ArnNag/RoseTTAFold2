@@ -140,11 +140,7 @@ with torch.no_grad():
 
     #
     t1d = t1d.to(pred.device).half()
-    print(f"{t1d.shape=}")
-    print(f"{t1d=}")
     t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
-    print(f"{t2d.shape=}")
-    print(f"{t2d=}")
     if not low_vram:
         t2d = t2d.to(pred.device)  # .half()
     idx_pdb = idx_pdb.to(pred.device)
@@ -193,7 +189,6 @@ with torch.no_grad():
         seq = seq.unsqueeze(0)
         msa_seed = msa_seed.unsqueeze(0)
         msa_extra = msa_extra.unsqueeze(0)
-        print(f"{msa_extra.shape=}")
 
         # fd memory savings
         msa_seed = msa_seed.half()  # GPU ONLY
