@@ -4,7 +4,7 @@ import torch
 from predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
 from symmetry import symm_subunit_matrix, find_symm_subs
 from chemical import INIT_CRDS
-from parsers import parse_a3m, parse_pdb_w_seq
+from parsers import parse_a3m, parse_pdb_w_seq, read_template_pdb
 from data_loader import merge_a3m_hetero
 from kinematics import xyz_to_t2d
 import util
@@ -61,7 +61,6 @@ subcrop = -1
 topk = -1
 low_vram = False
 B = 1
-msa_concat_mode = "diag"
 pred.xyz_converter = pred.xyz_converter.cpu()
 out_prefix = f"test_predict_{a3m_name}_map_{map_name}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
@@ -128,7 +127,7 @@ t1d = t1d.repeat(1, 1, Osub, 1)
 
 # symmetrize msa
 if Osub > 1:
-    msa_orig, ins_orig = merge_a3m_homo(msa_orig, ins_orig, Osub, mode=msa_concat_mode)
+    msa_orig, ins_orig = merge_a3m_homo(msa_orig, ins_orig, Osub, mode="diag")
 
 # index
 idx_pdb = torch.arange(Osub * L)[None, :]
@@ -209,6 +208,7 @@ with torch.no_grad():
         mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
         mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
         mask_recycle = same_chain.float() * mask_recycle.float()
+        mask_recycle = mask_recycle.to(pred.device)
 
         from featurizing import MSAFeaturize
 
@@ -364,8 +364,9 @@ with torch.no_grad():
 
             # xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], new_mask_t[0, 0, :, :], sigma=1e-1).unsqueeze(0)
 
+            new_pdb_path = f"new_xyz_cycle_{i_cycle}.pdb"
             util.writepdb(
-                f"new_xyz_cycle_{i_cycle}.pdb",
+                new_pdb_path,
                 new_xyz[0],
                 seq[0],
                 Ls,
@@ -374,8 +375,9 @@ with torch.no_grad():
 
         if pdb_name is not None:
             # hard-code the new_xyz based on a provided PDB file instead of doing density fitting
+            new_pdb_path = f"pdb/{pdb_name}.pdb"
             new_xyz = torch.from_numpy(
-                parse_pdb_w_seq(f"pdb/{pdb_name}.pdb")[
+                parse_pdb_w_seq(new_pdb_path)[
                     0
                 ]
             ).to(xyz_prev).unsqueeze(0)
@@ -384,7 +386,24 @@ with torch.no_grad():
 
         if i_cycle == 0:
             if use_template:
-                xyz_t = new_xyz[None, :, 1, :]
+                xyz_t, t1d, mask_t = read_template_pdb(L, new_pdb_path, align_conf=1.0)
+                xyz_t = xyz_t.unsqueeze(0).to(pred.device)
+                mask_t = mask_t.unsqueeze(0).to(pred.device)
+                t1d = t1d.unsqueeze(0).to(pred.device)
+                mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
+                mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
+                t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
+                seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
+                alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
+                    xyz_t.reshape(-1, L, 27, 3), seq_tmp, mask_in=mask_t.reshape(-1, L, 27)
+                )
+                xyz_t = xyz_t[:, :, :, 1]
+                alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
+
+                alpha[torch.isnan(alpha)] = 0.0
+                alpha = alpha.reshape(1, -1, L, 10, 2)
+                alpha_mask = alpha_mask.reshape(1, -1, L, 10, 1)
+                alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
             if use_xyz_prev:
                 xyz_prev = new_xyz
             if not use_pair_prev:
