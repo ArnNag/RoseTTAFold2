@@ -2,7 +2,6 @@ import glob
 
 import torch
 from predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
-from symmetry import symm_subunit_matrix, find_symm_subs
 from chemical import INIT_CRDS
 from parsers import parse_a3m, parse_pdb_w_seq, read_template_pdb
 from data_loader import merge_a3m_hetero
@@ -22,9 +21,9 @@ torch.backends.cuda.preferred_linalg_library(
     True,
     False,
     True,
-    "atpbind_atom",
+    "globin",
     None,
-    "atpbind"
+    "globin"
 )
 
 assert (map_name is None) + (pdb_name is None) == 1
@@ -71,8 +70,6 @@ msa, ins, Ls = parse_a3m(a3m)
 msa_orig = torch.tensor(msa).long()
 ins_orig = torch.tensor(ins).long()
 
-symmids, symmRs, symmmeta, symmoffset = symm_subunit_matrix(symm)
-
 ###
 # pass 2, templates
 L = sum(Ls)
@@ -83,7 +80,7 @@ xyz_t = (
     INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
     + torch.rand(n_templ, L, 1, 3) * 5.0
     - 2.5
-    + SYMM_OFFSET_SCALE * symmoffset * L ** (1 / 2)  # note: offset based on symmgroup
+    + L ** (1 / 2)  # note: offset based on symmgroup
 )
 
 
@@ -115,30 +112,12 @@ alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
 
 ###
 # pass 3, symmetry
-xyz_prev = xyz_t[:, 0]
-xyz_prev, symmsub = find_symm_subs(xyz_prev[:, :L], symmRs, symmmeta)
+xyz_prev = xyz_t[:, 0].to(pred.device)
 
-Osub = symmsub.shape[0]
-mask_t = mask_t.repeat(1, 1, Osub, 1)
-alpha_t = alpha_t.repeat(1, 1, Osub, 1)
 mask_prev_orig = mask_t[:, 0]
-xyz_t = xyz_t.repeat(1, 1, Osub, 1, 1)
-t1d = t1d.repeat(1, 1, Osub, 1)
-
-# symmetrize msa
-if Osub > 1:
-    msa_orig, ins_orig = merge_a3m_homo(msa_orig, ins_orig, Osub, mode="diag")
 
 # index
-idx_pdb = torch.arange(Osub * L)[None, :]
-
-same_chain = torch.zeros((1, Osub * L, Osub * L)).long()
-i_start = 0
-for o_i in range(Osub):
-    i_stop = i_start + L
-    idx_pdb[:, i_stop:] += 100
-    same_chain[:, i_start:i_stop, i_start:i_stop] = 1
-    i_start = i_stop
+idx_pdb = torch.arange(L)[None, :]
 
 mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
 mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
@@ -175,13 +154,6 @@ with torch.no_grad():
     mask_prev_orig = mask_prev_orig.to(pred.device)
     mask_prev = mask_prev_orig.clone()
     same_chain = same_chain.to(pred.device)
-    symmids = symmids.to(pred.device)
-    symmsub = symmsub.to(pred.device)
-    symmRs = symmRs.to(pred.device)
-
-    subsymms, _ = symmmeta
-    for i in range(len(subsymms)):
-        subsymms[i] = subsymms[i].to(pred.device)
 
     msa_prev = None
     pair_prev = None
@@ -208,7 +180,6 @@ with torch.no_grad():
         mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
         mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
         mask_recycle = same_chain.float() * mask_recycle.float()
-        mask_recycle = mask_recycle.to(pred.device)
 
         from featurizing import MSAFeaturize
 
@@ -239,7 +210,7 @@ with torch.no_grad():
                 p_bind,
                 xyz_prev,
                 alpha,
-                symmsub,
+                _,
                 pred_lddt,
                 msa_prev,
                 pair_prev,
@@ -262,10 +233,10 @@ with torch.no_grad():
                 p2p_crop=subcrop,
                 topk_crop=topk,
                 mask_recycle=mask_recycle,
-                symmids=symmids,
-                symmsub=symmsub,
-                symmRs=symmRs,
-                symmmeta=symmmeta,
+                symmids=None,
+                symmsub=None,
+                symmRs=None,
+                symmmeta=None,
                 striping=STRIPE,
             )
             alpha = alpha[-1].to(seq.device)
