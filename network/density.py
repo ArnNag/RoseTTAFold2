@@ -180,7 +180,7 @@ def rosetta_density_dock(before_dock_file, after_dock_file, model, mapfile):
     pose.dump_pdb(after_dock_file)
     xyz_with_dummy = torch.full_like(model['xyz'], torch.nan).unsqueeze(0)
     # TODO: better way to deal with batch axis than unsqueeze?
-    xyz_with_dummy[0][trimmed_model['plddt_mask']] = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(
+    xyz_with_dummy[0, trimmed_model['plddt_mask']] = torch.from_numpy(parse_pdb_w_seq(after_dock_file)[0]).to(
         xyz_with_dummy)
 
     return xyz_with_dummy, trimmed_model['plddt_mask']

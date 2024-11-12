@@ -278,10 +278,10 @@ with torch.no_grad():
                 before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
                 util.writepdb(
                     before_dock_file,
-                    xyz_prev[0][start_idx:end_idx],
-                    seq[0][start_idx:end_idx],
+                    xyz_prev[0, start_idx:end_idx],
+                    seq[0, start_idx:end_idx],
                     [end_idx - start_idx],
-                    bfacts=100 * pred_lddt[0][start_idx:end_idx],
+                    bfacts=100 * pred_lddt[0, start_idx:end_idx],
                 )
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                 dock_into_dens.apply(pose_before_fit)
@@ -296,7 +296,7 @@ with torch.no_grad():
                     hit = j + 1
                     next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
-                new_xyz[0][start_idx:end_idx] = torch.from_numpy(
+                new_xyz[0, start_idx:end_idx] = torch.from_numpy(
                     parse_pdb_w_seq(after_dock_file)[0]
                 )
 
@@ -306,7 +306,7 @@ with torch.no_grad():
             # is longer than long_jump_threshold
             for split_idx, split_pt in enumerate(splits, start=1):
                 assert split_pt >= 1
-                jump_dist = torch.norm(new_xyz[0][split_pt][0] - new_xyz[0][split_pt - 1][0])
+                jump_dist = torch.norm(new_xyz[0, split_pt, 0] - new_xyz[0, split_pt - 1, 0])
                 print(f"{jump_dist=}")
                 is_long_jump[split_idx] = jump_dist > long_jump_threshold
 
@@ -315,7 +315,7 @@ with torch.no_grad():
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
-                    new_mask[start_idx:end_idx] = False
+                    new_mask[0, start_idx:end_idx] = False
 
             xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, 0, :, :], sigma=1e-1).unsqueeze(0)
 
