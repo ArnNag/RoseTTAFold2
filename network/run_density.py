@@ -21,9 +21,9 @@ torch.backends.cuda.preferred_linalg_library(
     True,
     False,
     True,
-    "globin",
-    None,
-    "globin"
+    "atpbind_atom",
+    "emd_14914",
+    None
 )
 
 assert (map_name is None) + (pdb_name is None) == 1
@@ -61,7 +61,7 @@ topk = -1
 low_vram = False
 B = 1
 pred.xyz_converter = pred.xyz_converter.cpu()
-out_prefix = f"test_predict_{a3m_name}_map_{map_name}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
+out_prefix = f"test_predict_{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
 ###
 # pass 1, combined MSA
