@@ -826,7 +826,7 @@ def test_af2_pae_split_greedy():
     from network.density import split_by_pae
 
     pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
-    pae_array = numpy.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
+    pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
     first_best_slice: list[int] = split_by_pae(pae_array, min_split_length=100)
     print(first_best_slice)
 
@@ -855,21 +855,30 @@ def test_long_split():
         is_long_jump_portion = jump_dist > long_jump_threshold
         is_long_jump[split_idx] = is_long_jump_portion
 
+    new_mask = torch.full((B, chain_length, MAX_NUM_ATOMS_PER_RESIDUE), True, dtype=torch.bool)
+    for split_idx in range(len(splits_with_ends) - 1):
+        start_idx = splits_with_ends[split_idx]
+        end_idx = splits_with_ends[split_idx + 1]
+        if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
+            new_mask[0][start_idx:end_idx] = False
+
     print(is_long_jump)
+    print(new_mask[0].all(-1))
 
 
 
 
 def test_split_by_pae():
 
+    from network.density import split_by_pae
     block_sizes = [7, 3, 4, 5]
     total_size = sum(block_sizes)
-    block_matrix = torch.ones((total_size, total_size))
+    block_matrix = np.ones((total_size, total_size))
     current_index = 0
     for size in block_sizes:
         block_matrix[
             current_index : current_index + size, current_index : current_index + size
-        ] = torch.zeros((size, size))
+        ] = np.zeros((size, size))
         current_index += size
 
 
