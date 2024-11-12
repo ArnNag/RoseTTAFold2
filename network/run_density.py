@@ -317,7 +317,7 @@ with torch.no_grad():
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
                     new_mask[0, start_idx:end_idx] = False
 
-            new_xyz = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, 0, :, :], sigma=1e-1).unsqueeze(0)
+            new_xyz = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, :, :], sigma=1e-1).unsqueeze(0)
 
             new_pdb_path = f"new_xyz_cycle_{i_cycle}.pdb"
             util.writepdb(
