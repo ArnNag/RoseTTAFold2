@@ -833,6 +833,7 @@ def test_af2_pae_split_greedy():
 
 
 def test_long_split():
+    from network import util
     chain_length = 682
     splits = [104, 204, 312, 445, 552, 676]
     B = 1
@@ -865,7 +866,7 @@ def test_long_split():
     print(is_long_jump)
     print(new_mask[0].all(-1))
 
-
+    new_xyz = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, :, :], sigma=1e-1).unsqueeze(0)
 
 
 def test_split_by_pae():
