@@ -821,146 +821,42 @@ def test_rigid_twist_dock_from_af2_model():
     dock_into_dens.apply(movable_region)
 
 
-def test_af2_pae_split_louvain():
-    import json
-    import networkx as nx
-
-    pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
-    pae = json.load(open(pae_path))[0]["predicted_aligned_error"]
-    pae_graph = nx.complete_graph(len(pae))
-    for i in range(len(pae_graph)):
-        for j in range(len(pae_graph)):
-            if i != j:
-                pae_graph[i][j]["weight"] = pae[i][j]
-
-    pae_sets = nx.algorithms.community.louvain.louvain_communities(
-        pae_graph, resolution=1.003
-    )
-    for pae_set in pae_sets:
-        print(pae_set)
-
-
-def inter_vs_intra_pae_score(pae_cumsum: torch.Tensor, test_slice: slice) -> float:
-    assert test_slice.start >= 0
-    # assert test_slice.stop <= pae_array.shape[0]
-
-    # The letters below represent the cumulative sum of the region as well as the regions to the top and left.
-    # | A | B | C |
-    # | D | E | F |
-    # | G | H | I |
-
-    A = pae_cumsum[test_slice.start, test_slice.start]
-    B = pae_cumsum[test_slice.start, test_slice.stop]
-    C = pae_cumsum[test_slice.start, -1]
-    D = pae_cumsum[test_slice.stop, test_slice.start]
-    E = pae_cumsum[test_slice.stop, test_slice.stop]
-    F = pae_cumsum[test_slice.stop, -1]
-    G = pae_cumsum[-1, test_slice.start]
-    H = pae_cumsum[-1, test_slice.stop]
-
-    test_slice_len = test_slice.stop - test_slice.start
-    sum_inter_split_pae = A + E - B - D
-    sum_intra_split_pae = F + H - C - G - 2 * sum_inter_split_pae
-
-    # ic(avg_inter_split_pae)
-    pae_region_scale_factor = (sum_intra_split_pae * test_slice_len) / ((sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - test_slice_len))
-    # ic(avg_intra_split_pae)
-    return pae_region_scale_factor
-
-
-def split_by_pae(
-    pae_array: torch.Tensor,
-    min_split_length: int,
-) -> list[int]:
-
-    chain_length = pae_array.shape[0]
-    assert pae_array.shape[1] == chain_length
-    assert chain_length >= min_split_length
-    assert min_split_length > 0
-
-    pae_cumsum_rows = torch.cumsum(pae_array, dim=0)
-    pae_cumsum = torch.cumsum(pae_cumsum_rows, dim=1)
-    from torch.nn import functional
-    pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
-
-    def split_by_pae_for_region(
-        search_start_idx: int,
-        search_end_idx: int,
-        depth: int,
-    ) -> list[int]:
-
-        ic(search_start_idx)
-        ic(search_end_idx)
-        ic(depth)
-        assert chain_length >= search_end_idx
-        assert search_end_idx >= search_start_idx
-
-        if search_start_idx + min_split_length >= search_end_idx:
-            eprint("base case reached")
-            return []
-
-        best_pae_region_scale_factor = -float("inf")
-        best_slice = None
-        best_slice_length = -1
-        for start_idx in range(search_start_idx, search_end_idx - min_split_length + 1):
-            for end_idx in range(start_idx + min_split_length, search_end_idx + 1):
-                assert end_idx - start_idx >= min_split_length
-                test_slice = slice(start_idx, end_idx)
-                test_slice_length = end_idx - start_idx
-                pae_region_scale_factor: float = inter_vs_intra_pae_score(pae_cumsum, test_slice)
-                if pae_region_scale_factor > best_pae_region_scale_factor or (
-                    pae_region_scale_factor == best_pae_region_scale_factor
-                    and test_slice_length > best_slice_length
-                ):
-                    best_slice = test_slice
-                    best_pae_region_scale_factor = pae_region_scale_factor
-                    best_slice_length = test_slice_length
-
-        ic(best_slice)
-        assert best_slice is not None
-        assert best_slice.stop <= search_end_idx
-        assert best_slice.start >= search_start_idx
-
-        eprint("left call")
-        best_slice_before = split_by_pae_for_region(
-            search_start_idx=search_start_idx,
-            search_end_idx=best_slice.start,
-            depth=depth + 1,
-        )
-
-        eprint("right call")
-        best_slice_after = split_by_pae_for_region(
-            search_start_idx=best_slice.stop,
-            search_end_idx=search_end_idx,
-            depth=depth + 1,
-        )
-
-        best_slice_before.append(best_slice.stop)
-        best_slice_before.extend(best_slice_after)
-        return best_slice_before
-
-    return split_by_pae_for_region(
-        search_start_idx=0, search_end_idx=chain_length, depth=0
-    )
-
-
 def test_af2_pae_split_greedy():
     import json
+    from network.density import split_by_pae
 
     pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
-    pae_array = torch.tensor(json.load(open(pae_path))[0]["predicted_aligned_error"])
+    pae_array = numpy.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
     first_best_slice: list[int] = split_by_pae(pae_array, min_split_length=100)
     print(first_best_slice)
 
 
-def test_manual_pae_score():
-    import json
-    pae_path = "AF-P03960-F1-predicted_aligned_error_v4.json"
-    pae_array = np.array(json.load(open(pae_path))[0]["predicted_aligned_error"])
-    pae_region_scale_factor = inter_vs_intra_pae_score(pae_array, slice(0, 453))
-    other_pae_region_scale_factor = inter_vs_intra_pae_score(pae_array, slice(315, 453))
-    print(pae_region_scale_factor)
-    print(other_pae_region_scale_factor)
+
+def test_long_split():
+    chain_length = 682
+    splits = [104, 204, 312, 445, 552, 676]
+    B = 1
+    new_xyz = torch.zeros(B, chain_length, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    splits_with_ends = [0]
+    splits_with_ends.extend(splits)
+    splits_with_ends.append(chain_length)
+    for split_idx in range(len(splits_with_ends) - 1):
+        split_start = splits_with_ends[split_idx]
+        split_end = splits_with_ends[split_idx + 1]
+        torch.normal(torch.tensor([0, 0, (split_idx - 2) ** 2]), 1e-7, out=new_xyz[0, split_start:split_end])
+
+    long_jump_threshold = 3.
+    is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
+    # default to True for either end since we want to mask fragments on the ends if the only jump they touch
+    # is longer than long_jump_threshold
+    for split_idx, split_pt in enumerate(splits, start=1):
+        assert split_pt >= 1
+        jump_dist = torch.norm(new_xyz[0][split_pt][0] - new_xyz[0][split_pt - 1][0])
+        is_long_jump_portion = jump_dist > long_jump_threshold
+        is_long_jump[split_idx] = is_long_jump_portion
+
+    print(is_long_jump)
+
 
 
 
