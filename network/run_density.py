@@ -57,8 +57,7 @@ n_templ = 1
 n_recycles = 3
 nseqs = 256
 subcrop = -1
-topk = -1
-low_vram = False
+topk = 1536
 B = 1
 pred.xyz_converter = pred.xyz_converter.cpu()
 out_prefix = f"test_predict_{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
@@ -92,8 +91,6 @@ t1d = torch.cat((t1d, torch.zeros((n_templ, L, 1)).float()), -1)
 
 maxtmpl = 1
 
-same_chain = torch.full((1, L, L), True, dtype=torch.bool, device=xyz_t.device)
-
 # template features
 xyz_t = xyz_t[:maxtmpl].float().unsqueeze(0)
 mask_t = mask_t[:maxtmpl].unsqueeze(0)
@@ -114,23 +111,18 @@ alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
 # pass 3, symmetry
 xyz_prev = xyz_t[:, 0].to(pred.device)
 
-mask_prev_orig = mask_t[:, 0]
+mask_prev_orig = mask_t[:, 0].to(pred.device)
 
 # index
 idx_pdb = torch.arange(L)[None, :]
 
 mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
 mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
-mask_t_2d = (
-    mask_t_2d.float() * same_chain.float()[:, None]
-)  # (ignore inter-chain region)
 
 pred.model.eval()
 
 pred.xyz_converter = pred.xyz_converter.to(pred.device)
 pred.lddt_bins = pred.lddt_bins.to(pred.device)
-
-STRIPE = get_striping_parameters(low_vram)
 
 with torch.no_grad():
     msa = msa_orig.long().to(pred.device)  # (N, L)
@@ -141,15 +133,12 @@ with torch.no_grad():
     #
     t1d = t1d.to(pred.device).half()
     t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
-    if not low_vram:
-        t2d = t2d.to(pred.device)  # .half()
+    t2d = t2d.to(pred.device)  # .half()
     idx_pdb = idx_pdb.to(pred.device)
     xyz_t = xyz_t[:, :, :, 1].to(pred.device)
     mask_t_2d = mask_t_2d.to(pred.device)
     alpha_t = alpha_t.to(pred.device)
-    mask_prev_orig = mask_prev_orig.to(pred.device)
     mask_prev = mask_prev_orig.clone()
-    same_chain = same_chain.to(pred.device)
 
     msa_prev = None
     pair_prev = None
@@ -175,7 +164,7 @@ with torch.no_grad():
 
         mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
         mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
-        mask_recycle = same_chain.float() * mask_recycle.float()
+        mask_recycle = mask_recycle.float()
 
         from featurizing import MSAFeaturize
 
@@ -221,7 +210,7 @@ with torch.no_grad():
                 xyz_t=xyz_t,
                 alpha_t=alpha_t,
                 mask_t=mask_t_2d,
-                same_chain=same_chain,
+                same_chain=None,
                 msa_prev=msa_prev,
                 pair_prev=pair_prev,
                 state_prev=state_prev,
@@ -232,7 +221,7 @@ with torch.no_grad():
                 symmsub=None,
                 symmRs=None,
                 symmmeta=None,
-                striping=STRIPE,
+                striping=None,
             )
             alpha = alpha[-1].to(seq.device)
             xyz_prev = xyz_prev[-1].to(seq.device)
@@ -317,18 +306,18 @@ with torch.no_grad():
             # is longer than long_jump_threshold
             for split_idx, split_pt in enumerate(splits, start=1):
                 assert split_pt >= 1
-                jump_dist = new_xyz[0][split_pt] - new_xyz[0][split_pt - 1]
+                jump_dist = torch.norm(new_xyz[0][split_pt][0] - new_xyz[0][split_pt - 1][0])
                 print(f"{jump_dist=}")
                 is_long_jump[split_idx] = jump_dist > long_jump_threshold
 
-            new_mask_prev = torch.full_like(mask_prev_orig, True, dtype=torch.bool)
+            new_mask = torch.full_like(mask_prev_orig, True, dtype=torch.bool)
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
-                    new_mask_prev[start_idx:end_idx] = False
+                    new_mask[start_idx:end_idx] = False
 
-            # xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], new_mask_t[0, 0, :, :], sigma=1e-1).unsqueeze(0)
+            xyz_globin_masked_centered_realigned = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, 0, :, :], sigma=1e-1).unsqueeze(0)
 
             new_pdb_path = f"new_xyz_cycle_{i_cycle}.pdb"
             util.writepdb(

@@ -39,6 +39,23 @@ def center_and_realign_missing(xyz, mask_t):
 
     return xyz
 
+def realign_missing(xyz, mask_t, sigma):
+    # xyz: (L, 27, 3)
+    # mask_t: (L, 27)
+    L = xyz.shape[0]
+
+    mask = mask_t[:, :3].all(dim=-1)  # True for valid atom (L)
+
+    # move missing residues to the closest valid residues
+    exist_in_xyz = torch.where(mask)[0]  # L_sub
+    seqmap = (torch.arange(L, device=xyz.device)[:, None] - exist_in_xyz[None, :]).abs()  # (L, Lsub)
+    seqmap = torch.argmin(seqmap, dim=-1)  # L
+    idx = torch.gather(exist_in_xyz, 0, seqmap)
+    offset_CA = torch.gather(xyz[:, 1], 0, idx.reshape(L, 1).expand(-1, 3))
+    xyz = torch.where(mask.view(L, 1, 1), xyz, torch.randn(L, 1, 3) * sigma + offset_CA.reshape(L, 1, 3))
+
+    return xyz
+
 def th_ang_v(ab,bc,eps:float=1e-8):
     def th_norm(x,eps:float=1e-8):
         return x.square().sum(-1,keepdim=True).add(eps).sqrt()

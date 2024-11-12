@@ -107,6 +107,7 @@ with torch.cuda.amp.autocast(True):
         pair_prev=None,
         state_prev=None,
         mask_recycle=None,
+        topk_crop=1538,
         symmids=None,
         symmsub=None,
         symmRs=None,
