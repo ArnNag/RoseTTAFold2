@@ -300,7 +300,7 @@ with torch.no_grad():
                     parse_pdb_w_seq(after_dock_file)[0]
                 )
 
-            long_jump_threshold = 10.
+            long_jump_threshold = 50.
             is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
             # default to True for either end since we want to mask fragments on the ends if the only jump they touch
             # is longer than long_jump_threshold
@@ -317,6 +317,14 @@ with torch.no_grad():
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
                     new_mask[0, start_idx:end_idx] = False
 
+            new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}.pdb"
+            util.writepdb(
+                new_pdb_path_before_realign,
+                new_xyz[0],
+                seq[0],
+                Ls,
+                bfacts=100 * pred_lddt[0],
+            )
             new_xyz = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, :, :], sigma=1e-1).unsqueeze(0)
 
             new_pdb_path = f"new_xyz_cycle_{i_cycle}.pdb"
@@ -341,10 +349,10 @@ with torch.no_grad():
 
         if i_cycle == 0:
             if use_template:
-                xyz_t, t1d, mask_t = read_template_pdb(L, new_pdb_path, align_conf=1.0)
-                xyz_t = xyz_t.unsqueeze(0).to(pred.device)
-                mask_t = mask_t.unsqueeze(0).to(pred.device)
-                t1d = t1d.unsqueeze(0).to(pred.device)
+                conf = torch.where(new_mask, 1.0, 0.0)
+                t1d = torch.cat((seq[0], conf[:, None]), -1).unsqueeze(0)
+                xyz_t = new_xyz.unsqueeze(1)
+                mask_t = new_mask.unsqueeze(1)
                 mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
                 mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
                 t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
@@ -361,6 +369,7 @@ with torch.no_grad():
                 alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
             if use_xyz_prev:
                 xyz_prev = new_xyz
+                mask_recycle = new_mask
             if not use_pair_prev:
                 pair_prev = torch.zeros_like(pair_prev)
             if not use_state_prev:
