@@ -175,7 +175,6 @@ with torch.no_grad():
             params={"MAXLAT": nseqs, "MAXSEQ": nseqs_full, "MAXCYCLE": 1},
         )
 
-        seq = seq.unsqueeze(0)
         msa_seed = msa_seed.unsqueeze(0)
         msa_extra = msa_extra.unsqueeze(0)
 
@@ -202,7 +201,7 @@ with torch.no_grad():
             ) = pred.model(
                 msa_seed,
                 msa_extra,
-                seq,
+                seq.unsqueeze(0),
                 xyz_prev,
                 idx_pdb,
                 t1d=t1d,
@@ -225,7 +224,7 @@ with torch.no_grad():
             )
             alpha = alpha[-1].to(seq.device)
             xyz_prev = xyz_prev[-1].to(seq.device)
-            _, xyz_prev = pred.xyz_converter.compute_all_atom(seq, xyz_prev, alpha)
+            _, xyz_prev = pred.xyz_converter.compute_all_atom(seq.unsqueeze(0), xyz_prev, alpha)
 
         mask_recycle = None
         pair_prev = pair_prev.cpu()
@@ -263,7 +262,7 @@ with torch.no_grad():
 
             mapfile = f"map/{map_name}.map"
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-            new_xyz = torch.zeros_like(xyz_prev)
+            new_xyz = torch.zeros(xyz_prev.shape[1:])
             splits: list[int] = split_by_pae(best_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
             splits_with_ends = [0]
@@ -279,7 +278,7 @@ with torch.no_grad():
                 util.writepdb(
                     before_dock_file,
                     xyz_prev[0, start_idx:end_idx],
-                    seq[0, start_idx:end_idx],
+                    seq[start_idx:end_idx],
                     [end_idx - start_idx],
                     bfacts=100 * pred_lddt[0, start_idx:end_idx],
                 )
@@ -296,7 +295,7 @@ with torch.no_grad():
                     hit = j + 1
                     next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
-                new_xyz[0, start_idx:end_idx] = torch.from_numpy(
+                new_xyz[start_idx:end_idx] = torch.from_numpy(
                     parse_pdb_w_seq(after_dock_file)[0]
                 )
 
@@ -306,32 +305,32 @@ with torch.no_grad():
             # is longer than long_jump_threshold
             for split_idx, split_pt in enumerate(splits, start=1):
                 assert split_pt >= 1
-                jump_dist = torch.norm(new_xyz[0, split_pt, 0] - new_xyz[0, split_pt - 1, 0])
+                jump_dist = torch.norm(new_xyz[split_pt, 1] - new_xyz[split_pt - 1, 1])
                 print(f"{jump_dist=}")
                 is_long_jump[split_idx] = jump_dist > long_jump_threshold
 
-            new_mask = torch.full_like(mask_prev_orig, True, dtype=torch.bool)
+            new_mask = torch.full(mask_prev_orig.shape[1:], True, dtype=torch.bool)
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
-                    new_mask[0, start_idx:end_idx] = False
+                    new_mask[start_idx:end_idx] = False
 
             new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}.pdb"
             util.writepdb(
                 new_pdb_path_before_realign,
-                new_xyz[0],
-                seq[0],
+                new_xyz,
+                seq,
                 Ls,
                 bfacts=100 * pred_lddt[0],
             )
-            new_xyz = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, :, :], sigma=1e-1).unsqueeze(0)
+            new_xyz = util.realign_missing(new_xyz, new_mask, sigma=1e-1)
 
             new_pdb_path = f"new_xyz_cycle_{i_cycle}.pdb"
             util.writepdb(
                 new_pdb_path,
-                new_xyz[0],
-                seq[0],
+                new_xyz,
+                seq,
                 Ls,
                 bfacts=100 * pred_lddt[0],
             )
@@ -343,16 +342,16 @@ with torch.no_grad():
                 parse_pdb_w_seq(new_pdb_path)[
                     0
                 ]
-            ).to(xyz_prev).unsqueeze(0)
+            ).to(xyz_prev)
 
         pred_lddt = None
 
         if i_cycle == 0:
             if use_template:
                 conf = torch.where(new_mask, 1.0, 0.0)
-                t1d = torch.cat((seq[0], conf[:, None]), -1).unsqueeze(0)
-                xyz_t = new_xyz.unsqueeze(1)
-                mask_t = new_mask.unsqueeze(1)
+                t1d = torch.cat((seq, conf[:, None]), -1).unsqueeze(0)
+                xyz_t = new_xyz[None, None, :, :, :]
+                mask_t = new_mask[None, None, :, :]
                 mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
                 mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
                 t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
@@ -368,7 +367,7 @@ with torch.no_grad():
                 alpha_mask = alpha_mask.reshape(1, -1, L, 10, 1)
                 alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
             if use_xyz_prev:
-                xyz_prev = new_xyz
+                xyz_prev = new_xyz[None, :, :, :]
                 mask_recycle = new_mask
             if not use_pair_prev:
                 pair_prev = torch.zeros_like(pair_prev)
@@ -412,7 +411,7 @@ for i, li in enumerate(Ls):
         Lstartj += lj
     Lstarti += li
 
-util.writepdb(f"{out_prefix}.pdb", best_xyz[0], seq[0], Ls, bfacts=100 * best_lddt[0])
+util.writepdb(f"{out_prefix}.pdb", best_xyz[0], seq, Ls, bfacts=100 * best_lddt[0])
 
 prob_s = [
     prob.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.float16)

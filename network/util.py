@@ -52,7 +52,8 @@ def realign_missing(xyz, mask_t, sigma):
     seqmap = torch.argmin(seqmap, dim=-1)  # L
     idx = torch.gather(exist_in_xyz, 0, seqmap)
     offset_CA = torch.gather(xyz[:, 1], 0, idx.reshape(L, 1).expand(-1, 3))
-    xyz = torch.where(mask.view(L, 1, 1), xyz, torch.randn(L, 1, 3) * sigma + offset_CA.reshape(L, 1, 3))
+    noise_positions = torch.logical_and(~mask.view(L, 1, 1), ~xyz.isnan())
+    xyz = torch.where(noise_positions, torch.randn(L, 1, 3) * sigma + offset_CA.reshape(L, 1, 3), xyz)
 
     return xyz
 
