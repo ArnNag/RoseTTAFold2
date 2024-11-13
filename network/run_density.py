@@ -21,9 +21,9 @@ torch.backends.cuda.preferred_linalg_library(
     True,
     False,
     True,
-    "atpbind_atom",
-    "emd_14914",
-    None
+    "test_globin",
+    None,
+    "globin"
 )
 
 assert (map_name is None) + (pdb_name is None) == 1
@@ -51,7 +51,6 @@ pred = Predictor(model, torch.device("cuda:0"))
 #     if not isinstance(module, torch.jit.ScriptModule):
 #         module.register_forward_pre_hook(nan_check_hook)
 
-symm = "C1"
 nseqs_full = 2048
 n_templ = 1
 n_recycles = 3
@@ -74,7 +73,6 @@ ins_orig = torch.tensor(ins).long()
 L = sum(Ls)
 
 # dummy template
-SYMM_OFFSET_SCALE = 1.0
 xyz_t = (
     INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
     + torch.rand(n_templ, L, 1, 3) * 5.0
@@ -92,9 +90,9 @@ t1d = torch.cat((t1d, torch.zeros((n_templ, L, 1)).float()), -1)
 maxtmpl = 1
 
 # template features
-xyz_t = xyz_t[:maxtmpl].float().unsqueeze(0)
-mask_t = mask_t[:maxtmpl].unsqueeze(0)
-t1d = t1d[:maxtmpl].float().unsqueeze(0)
+xyz_t = xyz_t[:maxtmpl].float()
+mask_t = mask_t[:maxtmpl]
+t1d = t1d[:maxtmpl].float()
 
 seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
 alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
@@ -109,15 +107,16 @@ alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
 
 ###
 # pass 3, symmetry
-xyz_prev = xyz_t[:, 0].to(pred.device)
+ic(xyz_t.shape)
+xyz_prev = xyz_t[0, :, :, :].to(pred.device)  # select the 0th template
 
-mask_prev_orig = mask_t[:, 0].to(pred.device)
+mask_prev_orig = mask_t[0, :, :].to(pred.device)
 
 # index
 idx_pdb = torch.arange(L)[None, :]
 
-mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
-mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
+mask_t_2d = mask_t[:, :, :3].all(dim=-1)  # (T, L)
+mask_t_2d = mask_t_2d[:, None] * mask_t_2d[:, :, None]  # (T, L, L)
 
 pred.model.eval()
 
@@ -132,10 +131,10 @@ with torch.no_grad():
 
     #
     t1d = t1d.to(pred.device).half()
-    t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
+    t2d = xyz_to_t2d(xyz_t.unsqueeze(0), mask_t_2d.unsqueeze(0)).half()
     t2d = t2d.to(pred.device)  # .half()
     idx_pdb = idx_pdb.to(pred.device)
-    xyz_t = xyz_t[:, :, :, 1].to(pred.device)
+    xyz_t = xyz_t[:, :, :, 1].to(pred.device)  # select alpha carbon
     mask_t_2d = mask_t_2d.to(pred.device)
     alpha_t = alpha_t.to(pred.device)
     mask_prev = mask_prev_orig.clone()
@@ -162,8 +161,8 @@ with torch.no_grad():
 
     for i_cycle in range(n_recycles + 1):
 
-        mask_recycle = mask_prev[:, :, :3].bool().all(dim=-1)
-        mask_recycle = mask_recycle[:, :, None] * mask_recycle[:, None, :]  # (B, L, L)
+        mask_recycle = mask_prev[:, :3].bool().all(dim=-1)
+        mask_recycle = mask_recycle[:, None] * mask_recycle[None, :]  # (L, L)
         mask_recycle = mask_recycle.float()
 
         from featurizing import MSAFeaturize
@@ -183,6 +182,9 @@ with torch.no_grad():
         msa_extra = msa_extra.half()  # GPU ONLY
 
         xyz_prev_prev = xyz_prev.clone()
+        ic()
+        ic(xyz_prev.shape)
+        ic(xyz_t.shape)
 
         with torch.cuda.amp.autocast(True):
             (
@@ -202,13 +204,13 @@ with torch.no_grad():
                 msa_seed,
                 msa_extra,
                 seq.unsqueeze(0),
-                xyz_prev,
+                xyz_prev.unsqueeze(0),
                 idx_pdb,
-                t1d=t1d,
+                t1d=t1d.unsqueeze(0),
                 t2d=t2d,
-                xyz_t=xyz_t,
+                xyz_t=xyz_t.unsqueeze(0),
                 alpha_t=alpha_t,
-                mask_t=mask_t_2d,
+                mask_t=mask_t_2d.unsqueeze(0),
                 same_chain=None,
                 msa_prev=msa_prev,
                 pair_prev=pair_prev,
@@ -254,6 +256,8 @@ with torch.no_grad():
             lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
             pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
         )
+
+        new_mask = torch.full(mask_prev_orig.shape[1:], True, dtype=torch.bool, device=pred.device)
 
         if map_name is not None and i_cycle == 0:
             from pyrosetta import rosetta, Pose, pose_from_pdb
@@ -309,7 +313,6 @@ with torch.no_grad():
                 print(f"{jump_dist=}")
                 is_long_jump[split_idx] = jump_dist > long_jump_threshold
 
-            new_mask = torch.full(mask_prev_orig.shape[1:], True, dtype=torch.bool)
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
@@ -348,16 +351,20 @@ with torch.no_grad():
 
         if i_cycle == 0:
             if use_template:
-                conf = torch.where(new_mask, 1.0, 0.0)
-                t1d = torch.cat((seq, conf[:, None]), -1).unsqueeze(0)
+                conf = torch.where(new_mask.all(dim=-1), 1.0, 0.0)
+                seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
+                ic()
+                ic(seq.shape)
+                ic(conf.shape)
+                t1d = torch.cat((seq_onehot, conf[:, None]), -1).unsqueeze(0)
                 xyz_t = new_xyz[None, None, :, :, :]
                 mask_t = new_mask[None, None, :, :]
                 mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
                 mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
-                t2d = xyz_to_t2d(xyz_t, mask_t_2d).half()
+                t2d = xyz_to_t2d(xyz_t.unsqueeze(0), mask_t_2d).half()
                 seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
                 alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
-                    xyz_t.reshape(-1, L, 27, 3), seq_tmp, mask_in=mask_t.reshape(-1, L, 27)
+                    xyz_t.reshape(-1, L, 27, 3).float(), seq_tmp, mask_in=mask_t.reshape(-1, L, 27)
                 )
                 xyz_t = xyz_t[:, :, :, 1]
                 alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
