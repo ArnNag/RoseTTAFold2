@@ -374,6 +374,12 @@ class Predictor():
         t1d = t1d[:maxtmpl].float().unsqueeze(0)
 
         seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
+        ic()
+        ic(xyz_t.shape)
+        ic(xyz_t.reshape(-1, L, 27, 3).shape)
+        ic(seq_tmp.shape)
+        ic(mask_t.shape)
+        ic(mask_t.reshape(-1, L, 27).shape)
         alpha, _, alpha_mask, _ = self.xyz_converter.get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, mask_in=mask_t.reshape(-1,L,27))
         alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
 
@@ -572,7 +578,12 @@ class Predictor():
             B = 1
             #
             t1d = t1d.to(self.device).half()
+            ic()
+            ic(xyz_t.shape)
+            ic(mask_t.shape)
             t2d = xyz_to_t2d(xyz_t, mask_t).half()
+            ic()
+            ic(t2d.shape)
             if not low_vram:
                 t2d = t2d.to(self.device) #.half()
             idx_pdb = idx_pdb.to(self.device)
@@ -617,6 +628,21 @@ class Predictor():
                 xyz_prev_prev = xyz_prev.clone()
 
                 with torch.cuda.amp.autocast(True):
+                    ic()
+                    ic(msa_seed.shape)
+                    ic(msa_extra.shape)
+                    ic(seq.shape)
+                    ic(xyz_prev.shape)
+                    ic(idx_pdb.shape)
+                    ic(t1d.shape)
+                    ic(t2d.shape)
+                    ic(xyz_t.shape)
+                    ic(alpha_t.shape)
+                    ic(mask_t.shape)
+                    ic(None if msa_prev is None else msa_prev.shape)
+                    ic(None if pair_prev is None else pair_prev.shape)
+                    ic(None if state_prev is None else state_prev.shape)
+                    ic(None if mask_recycle is None else mask_recycle.shape)
                     logit_s, _, _, logits_pae, p_bind, xyz_prev, alpha, symmsub, pred_lddt, msa_prev, pair_prev, state_prev = self.model(
                                                                msa_seed, msa_extra,
                                                                seq, xyz_prev, 
@@ -637,6 +663,10 @@ class Predictor():
                                                                striping=STRIPE )
                     alpha = alpha[-1].to(seq.device)
                     xyz_prev = xyz_prev[-1].to(seq.device)
+                    ic()
+                    ic(seq.shape)
+                    ic(xyz_prev.shape)
+                    ic(alpha.shape)
                     _, xyz_prev = self.xyz_converter.compute_all_atom(seq, xyz_prev, alpha)
 
                 mask_recycle=None
