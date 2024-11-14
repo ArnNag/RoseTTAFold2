@@ -269,7 +269,7 @@ with torch.no_grad():
                 before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
                 util.writepdb(
                     before_dock_file,
-                    xyz_prev[0, start_idx:end_idx],
+                    xyz_prev[start_idx:end_idx, :, :],
                     seq[start_idx:end_idx],
                     [end_idx - start_idx],
                     bfacts=100 * pred_lddt[0, start_idx:end_idx],
@@ -287,7 +287,7 @@ with torch.no_grad():
                     hit = j + 1
                     next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
-                new_xyz[start_idx:end_idx] = torch.from_numpy(
+                new_xyz[start_idx:end_idx, :, :] = torch.from_numpy(
                     parse_pdb_w_seq(after_dock_file)[0]
                 )
 
@@ -297,7 +297,7 @@ with torch.no_grad():
             # is longer than long_jump_threshold
             for split_idx, split_pt in enumerate(splits, start=1):
                 assert split_pt >= 1
-                jump_dist = torch.norm(new_xyz[split_pt, 1] - new_xyz[split_pt - 1, 1])
+                jump_dist = torch.norm(new_xyz[split_pt, 1, :] - new_xyz[split_pt - 1, 1, :])
                 print(f"{jump_dist=}")
                 is_long_jump[split_idx] = jump_dist > long_jump_threshold
 
@@ -340,11 +340,11 @@ with torch.no_grad():
                 conf = torch.where(new_mask.all(dim=-1), 1.0, 0.0)
                 seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
                 t1d = torch.cat((seq_onehot, conf[:, None]), -1).unsqueeze(0)
-                xyz_t = new_xyz[None, :, :, :]
-                mask_t = new_mask[None, None, :, :]
-                mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
-                mask_t_2d = mask_t_2d[:, :, None, :] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
-                t2d = xyz_to_t2d(xyz_t[None, :, :, :, :], mask_t_2d).half()
+                xyz_t = new_xyz[None, :, :, :]  # (T, L, A, X)
+                mask_t = new_mask[None, :, :]  # (T, L, A)
+                mask_t_2d = mask_t[:, :, :3].all(dim=-1)  # (T, L)
+                mask_t_2d = mask_t_2d[:, None, :] * mask_t_2d[:, :, None]  # (T, L, L)
+                t2d = xyz_to_t2d(xyz_t[None, :, :, :, :], mask_t_2d[None, :, :, :]).half()
                 seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
                 alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
                     xyz_t.reshape(-1, L, 27, 3).float(), seq_tmp, mask_in=mask_t.reshape(-1, L, 27)
