@@ -381,6 +381,9 @@ class Predictor():
         ic(mask_t.shape)
         ic(mask_t.reshape(-1, L, 27).shape)
         alpha, _, alpha_mask, _ = self.xyz_converter.get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, mask_in=mask_t.reshape(-1,L,27))
+        ic()
+        ic(alpha.shape)
+        ic(alpha_mask.shape)
         alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
 
         alpha[torch.isnan(alpha)] = 0.0
@@ -661,6 +664,9 @@ class Predictor():
                                                                symmRs=symmRs,
                                                                symmmeta=symmmeta, 
                                                                striping=STRIPE )
+                    ic()
+                    ic(alpha.shape)
+                    ic(xyz_prev.shape)
                     alpha = alpha[-1].to(seq.device)
                     xyz_prev = xyz_prev[-1].to(seq.device)
                     ic()
