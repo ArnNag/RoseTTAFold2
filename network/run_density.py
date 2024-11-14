@@ -78,7 +78,7 @@ xyz_t = (
     + torch.rand(n_templ, L, 1, 3) * 5.0
     - 2.5
     + L ** (1 / 2)  # note: offset based on symmgroup
-)
+).float()
 
 
 mask_t = torch.full((n_templ, L, 27), False)
@@ -87,12 +87,8 @@ t1d = torch.nn.functional.one_hot(
 ).float()  # all gaps
 t1d = torch.cat((t1d, torch.zeros((n_templ, L, 1)).float()), -1)
 
-maxtmpl = 1
-
 # template features
-xyz_t = xyz_t[:maxtmpl].float()
-mask_t = mask_t[:maxtmpl]
-t1d = t1d[:maxtmpl].float()
+t1d = t1d.float()
 
 seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
 alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
@@ -107,6 +103,7 @@ alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
 
 ###
 # pass 3, symmetry
+ic()
 ic(xyz_t.shape)
 xyz_prev = xyz_t[0, :, :, :].to(pred.device)  # select the 0th template
 
@@ -134,7 +131,11 @@ with torch.no_grad():
     t2d = xyz_to_t2d(xyz_t.unsqueeze(0), mask_t_2d.unsqueeze(0)).half()
     t2d = t2d.to(pred.device)  # .half()
     idx_pdb = idx_pdb.to(pred.device)
-    xyz_t = xyz_t[:, :, :, 1].to(pred.device)  # select alpha carbon
+    ic()
+    ic(xyz_t.shape)
+    xyz_t = xyz_t[:, :, 1, :].to(pred.device)  # select alpha carbon
+    ic()
+    ic(xyz_t.shape)
     mask_t_2d = mask_t_2d.to(pred.device)
     alpha_t = alpha_t.to(pred.device)
     mask_prev = mask_prev_orig.clone()
@@ -144,7 +145,7 @@ with torch.no_grad():
     state_prev = None
 
     best_lddt = torch.tensor([-1.0], device=pred.device)
-    best_xyz = None
+    last_xyz = None
     best_logit = None
     best_pae = None
 
@@ -188,11 +189,11 @@ with torch.no_grad():
 
         with torch.cuda.amp.autocast(True):
             (
-                logit_s,
+                _,
                 _,
                 _,
                 logits_pae,
-                p_bind,
+                _,
                 xyz_prev,
                 alpha,
                 _,
@@ -224,9 +225,12 @@ with torch.no_grad():
                 symmmeta=None,
                 striping=None,
             )
-            alpha = alpha[-1].to(seq.device)
-            xyz_prev = xyz_prev[-1].to(seq.device)
-            _, xyz_prev = pred.xyz_converter.compute_all_atom(seq.unsqueeze(0), xyz_prev, alpha)
+            alpha = alpha[-1, 0, :, :, :].to(seq.device)
+            xyz_prev = xyz_prev[-1, 0, :, :, :].to(seq.device)
+            ic()
+            ic(xyz_prev.shape)
+            _, xyz_prev = pred.xyz_converter.compute_all_atom(seq[None, :], xyz_prev[None, :, :, :], alpha[None, :, :, :])
+            xyz_prev = xyz_prev[0, :, :, :]
 
         mask_recycle = None
         pair_prev = pair_prev.cpu()
@@ -244,20 +248,15 @@ with torch.no_grad():
 
         torch.cuda.empty_cache()
 
-        best_xyz = xyz_prev
-        best_logit = logit_s
-        best_lddt = pred_lddt.half().cpu()
-        best_pae = logits_pae.half().cpu()
-        best_logit = [l.half().cpu() for l in logit_s]
-        logits_pae, logit_s = None, None
         metrics_file = f"test_{a3m_name}_{map_name}_cycle_{i_cycle}"
         np.savez_compressed(
             metrics_file,
-            lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
-            pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
+            lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
+            pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
         )
+        util.writepdb(f"{out_prefix}_{i_cycle}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
-        new_mask = torch.full(mask_prev_orig.shape[1:], True, dtype=torch.bool, device=pred.device)
+        new_mask = torch.full_like(mask_prev_orig, True)
 
         if map_name is not None and i_cycle == 0:
             from pyrosetta import rosetta, Pose, pose_from_pdb
@@ -266,12 +265,14 @@ with torch.no_grad():
 
             mapfile = f"map/{map_name}.map"
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-            new_xyz = torch.zeros(xyz_prev.shape[1:])
-            splits: list[int] = split_by_pae(best_pae[0].to(torch.float32), min_split_length=100)
+            ic()
+            ic(xyz_prev.shape)
+            new_xyz = torch.zeros_like(xyz_prev)
+            splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
             splits_with_ends = [0]
             splits_with_ends.extend(splits)
-            splits_with_ends.append(len(best_pae[0]))
+            splits_with_ends.append(len(logits_pae[0]))
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
@@ -346,27 +347,31 @@ with torch.no_grad():
                     0
                 ]
             ).to(xyz_prev)
-
-        pred_lddt = None
+            ic()
+            ic(xyz_prev.shape)
 
         if i_cycle == 0:
             if use_template:
+                ic()
+                ic(new_mask.shape)
                 conf = torch.where(new_mask.all(dim=-1), 1.0, 0.0)
                 seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
                 ic()
                 ic(seq.shape)
                 ic(conf.shape)
                 t1d = torch.cat((seq_onehot, conf[:, None]), -1).unsqueeze(0)
-                xyz_t = new_xyz[None, None, :, :, :]
+                xyz_t = new_xyz[None, :, :, :]
                 mask_t = new_mask[None, None, :, :]
                 mask_t_2d = mask_t[:, :, :, :3].all(dim=-1)  # (B, T, L)
-                mask_t_2d = mask_t_2d[:, :, None] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
-                t2d = xyz_to_t2d(xyz_t.unsqueeze(0), mask_t_2d).half()
+                mask_t_2d = mask_t_2d[:, :, None, :] * mask_t_2d[:, :, :, None]  # (B, T, L, L)
+                t2d = xyz_to_t2d(xyz_t[None, :, :, :, :], mask_t_2d).half()
                 seq_tmp = t1d[..., :-1].argmax(dim=-1).reshape(-1, L)
                 alpha, _, alpha_mask, _ = pred.xyz_converter.get_torsions(
                     xyz_t.reshape(-1, L, 27, 3).float(), seq_tmp, mask_in=mask_t.reshape(-1, L, 27)
                 )
-                xyz_t = xyz_t[:, :, :, 1]
+                ic()
+                ic(xyz_t.shape)
+                xyz_t = xyz_t[:, :, 1, :]
                 alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[..., 0]))
 
                 alpha[torch.isnan(alpha)] = 0.0
@@ -374,7 +379,7 @@ with torch.no_grad():
                 alpha_mask = alpha_mask.reshape(1, -1, L, 10, 1)
                 alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
             if use_xyz_prev:
-                xyz_prev = new_xyz[None, :, :, :]
+                xyz_prev = new_xyz
                 mask_recycle = new_mask
             if not use_pair_prev:
                 pair_prev = torch.zeros_like(pair_prev)
@@ -386,47 +391,3 @@ with torch.no_grad():
                 msa_prev = torch.zeros_like(msa_prev)
                 seq = torch.zeros_like(seq)
 
-    # free more memory
-    pair_prev, msa_prev, t2d = None, None, None
-
-    prob_s = list()
-    for logit in best_logit:
-        prob = pred.active_fn(logit.to(pred.device).float())  # distogram
-        prob_s.append(prob.half().cpu())
-
-best_xyz = best_xyz.float().cpu()
-outdata = {}
-
-# RMS
-outdata["mean_plddt"] = best_lddt.mean().item()
-Lstarti = 0
-for i, li in enumerate(Ls):
-    Lstartj = 0
-    for j, lj in enumerate(Ls):
-        if j > i:
-            outdata["pae_chain_" + str(i) + "_" + str(j)] = (
-                0.5
-                * (
-                    best_pae[
-                        :, Lstarti : (Lstarti + li), Lstartj : (Lstartj + lj)
-                    ].mean()
-                    + best_pae[
-                        :, Lstartj : (Lstartj + lj), Lstarti : (Lstarti + li)
-                    ].mean()
-                ).item()
-            )
-        Lstartj += lj
-    Lstarti += li
-
-util.writepdb(f"{out_prefix}.pdb", best_xyz[0], seq, Ls, bfacts=100 * best_lddt[0])
-
-prob_s = [
-    prob.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.float16)
-    for prob in prob_s
-]
-np.savez_compressed(
-    out_prefix,
-    dist=prob_s[0].astype(np.float16),
-    lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16),
-    pae=best_pae[0].detach().cpu().numpy().astype(np.float16),
-)
