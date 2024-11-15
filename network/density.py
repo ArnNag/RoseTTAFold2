@@ -1,5 +1,6 @@
 import os
 import torch
+import numpy as np
 from icecream import ic
 
 import util
@@ -165,6 +166,42 @@ def split_by_pae(
     return split_by_pae_for_region(
         search_start_idx=0, search_end_idx=chain_length
     )
+
+
+def check_clash(xyz: torch.Tensor, splits_with_ends: list[int], fit_scores_by_split: list[int], clash_threshold: float) -> torch.Tensor:
+    """
+    xyz: shape (L, MAX_NUMBER_OF_ATOMS, NUM_EUCLIDEAN_DIMS)
+    fit_scores_by_split: length (len(splits_with_ends) - 1)
+    """
+    import networkx as nx
+
+    # Create a graph
+    G = nx.Graph()
+    # Add nodes
+    G.add_nodes_from(range(len(splits_with_ends) - 1))
+
+    for split_idx_i in range(1, len(splits_with_ends) - 1):
+        split_start_i = splits_with_ends[split_idx_i]
+        split_end_i = splits_with_ends[split_idx_i + 1]
+        for split_idx_j in range(split_idx_i):
+            split_start_j = splits_with_ends[split_idx_j]
+            split_end_j = splits_with_ends[split_idx_j + 1]
+            all_inter_dist = torch.cdist(xyz[split_start_i:split_end_i, :, :].swapaxes(0, 1),
+                                         xyz[split_start_j:split_end_j, :, :].swapaxes(0, 1))
+            if torch.any(all_inter_dist < clash_threshold):
+                G.add_edge(split_idx_i, split_idx_j)
+
+    splits_to_mask: list[int] = []
+    for component in nx.components.connected_components(G):
+        if len(component) > 1:
+            splits_to_mask.append(min((split for split in component), key=lambda split: fit_scores_by_split[split]))
+
+    mask = torch.full((len(splits_with_ends) - 1,), True)
+
+    for split_idx_i in range(len(splits_to_mask)):
+        mask[split_idx_i] = False
+
+    return mask
 
 
 def rosetta_density_dock(before_dock_file, after_dock_file, model, mapfile):
