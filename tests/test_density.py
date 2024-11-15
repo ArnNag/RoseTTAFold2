@@ -885,7 +885,13 @@ def test_check_clash():
     from matplotlib import pyplot as plt
     plt.plot(new_xyz[:, :, 2])
     plt.savefig("test_check_clash.png")
-    is_clash = torch.full((len(splits) + 1,), False, dtype=torch.bool)
+
+    import networkx as nx
+
+    # Create a graph
+    G = nx.Graph()
+    # Add nodes
+    G.add_nodes_from(range(len(splits) + 1))
 
     for split_idx_i in range(1, len(splits) + 1):
         split_start_i = splits_with_ends[split_idx_i]
@@ -894,9 +900,25 @@ def test_check_clash():
             split_start_j = splits_with_ends[split_idx_j]
             split_end_j = splits_with_ends[split_idx_j + 1]
             all_inter_dist = torch.cdist(new_xyz[split_start_i:split_end_i, :, :].swapaxes(0, 1), new_xyz[split_start_j:split_end_j, :, :].swapaxes(0, 1))
-            is_clash[split_idx_i] = is_clash[split_idx_i] or torch.any(all_inter_dist < clash_threshold)
+            if torch.any(all_inter_dist < clash_threshold):
+                G.add_edge(split_idx_i, split_idx_j)
 
-    print(is_clash)
+    splits_to_mask: list[int] = []
+    for component in nx.components.connected_components(G):
+        if len(component) > 1:
+            splits_to_mask.append(min((split for split in component), key=lambda split: split))
+
+    mask = torch.full((chain_length, ), True)
+
+    for split_idx_i in range(len(splits_to_mask)):
+        split_start_i = splits_with_ends[split_idx_i]
+        split_end_i = splits_with_ends[split_idx_i + 1]
+        mask[split_start_i:split_end_i] = False
+
+    print(mask)
+
+
+
 
 
 
