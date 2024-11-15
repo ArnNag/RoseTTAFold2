@@ -869,6 +869,40 @@ def test_long_split():
     new_xyz = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, :, :], sigma=1e-1).unsqueeze(0)
 
 
+def test_check_clash():
+    clash_threshold = 0.2
+    chain_length = 682
+    splits = [104, 204, 312, 445, 552, 676]
+    new_xyz = torch.zeros(chain_length, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    splits_with_ends = [0]
+    splits_with_ends.extend(splits)
+    splits_with_ends.append(chain_length)
+    for split_idx in range(len(splits_with_ends) - 1):
+        split_start = splits_with_ends[split_idx]
+        split_end = splits_with_ends[split_idx + 1]
+        torch.normal(torch.tensor([0, 0, split_idx % 5]), 1e-7, out=new_xyz[split_start:split_end])
+
+    from matplotlib import pyplot as plt
+    plt.plot(new_xyz[:, :, 2])
+    plt.savefig("test_check_clash.png")
+    is_clash = torch.full((len(splits) + 1,), False, dtype=torch.bool)
+
+    for split_idx_i in range(1, len(splits) + 1):
+        split_start_i = splits_with_ends[split_idx_i]
+        split_end_i = splits_with_ends[split_idx_i + 1]
+        for split_idx_j in range(split_idx_i):
+            split_start_j = splits_with_ends[split_idx_j]
+            split_end_j = splits_with_ends[split_idx_j + 1]
+            all_inter_dist = torch.cdist(new_xyz[split_start_i:split_end_i, :, :].swapaxes(0, 1), new_xyz[split_start_j:split_end_j, :, :].swapaxes(0, 1))
+            is_clash[split_idx_i] = is_clash[split_idx_i] or torch.any(all_inter_dist < clash_threshold)
+
+    print(is_clash)
+
+
+
+
+
+
 def test_split_by_pae():
 
     from network.density import split_by_pae
@@ -886,194 +920,3 @@ def test_split_by_pae():
     print(split_by_pae(block_matrix, min_split_length=5))
 
 
-def simple_score_fn(my_list: list, my_slice: slice) -> int:
-    """
-    Return the sum of the items in my_list corresponding to my_slice minus the length of the slice.
-    """
-    sliced_list: list = my_list[my_slice]
-    return sum(sliced_list) - len(sliced_list)
-
-
-def find_best_slice(
-    score_fn: Callable[[list, slice], int],
-    my_list: list,
-    min_slice_size: int,
-    search_start_idx: int,
-    search_end_idx: int,
-) -> slice:
-    """
-    Return the slice of my_list with the best score as computed by score_fn. Defaults to the longest slice if there
-    is a tie in score. Defaults to the leftmost slice if there is a tie in both score and length.
-    """
-    best_score = -float("inf")
-    best_slice: Union[None, slice] = None
-    best_slice_length = -1
-    print(f"{search_start_idx=}")
-    print(f"{search_end_idx=}")
-    print("starting loop")
-    for start_idx in range(search_start_idx, search_end_idx - min_slice_size + 1):
-        for end_idx in range(start_idx + min_slice_size, search_end_idx + 1):
-            print(f"{start_idx=}")
-            print(f"{end_idx=}")
-            test_slice_length = end_idx - start_idx
-            test_slice = slice(start_idx, end_idx)
-            score: int = score_fn(my_list, test_slice)
-            if score > best_score or (
-                score == best_score and test_slice_length > best_slice_length
-            ):
-                best_score = score
-                best_slice = test_slice
-                best_slice_length = test_slice_length
-
-    return best_slice
-
-
-def find_all_slices(
-    score_fn: Callable[[list, slice], int],
-    my_list: list,
-    min_slice_size: int,
-    search_start_idx: int,
-    search_end_idx: int,
-) -> list[int]:
-
-    if search_end_idx - search_start_idx <= min_slice_size:
-        return []
-
-    best_slice: slice = find_best_slice(
-        score_fn, my_list, min_slice_size, search_start_idx, search_end_idx
-    )
-    print("left call")
-    best_slices_before: list[int] = find_all_slices(
-        score_fn, my_list, min_slice_size, search_start_idx, best_slice.start
-    )
-    print("right call")
-    best_slices_after: list[int] = find_all_slices(
-        score_fn, my_list, min_slice_size, best_slice.stop, search_end_idx
-    )
-
-    # best_slices_before.append(best_slice.start)
-    best_slices_before.append(best_slice.stop)
-    best_slices_before.extend(best_slices_after)
-
-    return best_slices_before
-
-
-def test_find_slice_with_best_score():
-    my_list = [0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 2, 2, 2]
-    print(len(my_list))
-    # print(find_slice(score_fn=simple_score_fn, my_list=my_list, min_slice_size=0, search_start_idx=0, search_end_idx=len(my_list)))
-    # print(
-    #     find_best_slice(
-    #         score_fn=simple_score_fn,
-    #         my_list=my_list,
-    #         min_slice_size=5,
-    #         search_start_idx=8,
-    #         search_end_idx=len(my_list),
-    #     )
-    # )
-
-    print(
-        find_all_slices(
-            score_fn=simple_score_fn,
-            my_list=my_list,
-            min_slice_size=3,
-            search_start_idx=8,
-            search_end_idx=len(my_list),
-        )
-    )
-
-def test_cumsum_vs_naive_scoring():
-    block_sizes = [3, 2]
-    total_size = sum(block_sizes)
-    block_matrix = torch.ones((total_size, total_size))
-    current_index = 0
-    for size in block_sizes:
-        block_matrix[
-        current_index: current_index + size, current_index: current_index + size
-        ] = torch.zeros((size, size))
-        current_index += size
-
-    pae_cumsum_rows = torch.cumsum(block_matrix, dim=0)
-    pae_cumsum = torch.cumsum(pae_cumsum_rows, dim=1)
-    from torch.nn import functional
-    pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
-
-    test_slice = slice(1, 4)
-
-    A = pae_cumsum[test_slice.start, test_slice.start]
-    B = pae_cumsum[test_slice.start, test_slice.stop]
-    C = pae_cumsum[test_slice.start, -1]
-    D = pae_cumsum[test_slice.stop, test_slice.start]
-    E = pae_cumsum[test_slice.stop, test_slice.stop]
-    F = pae_cumsum[test_slice.stop, -1]
-    G = pae_cumsum[-1, test_slice.start]
-    H = pae_cumsum[-1, test_slice.stop]
-
-    test_slice_len = test_slice.stop - test_slice.start
-    inter_slice_size = test_slice_len ** 2
-    sum_inter_split_pae = A + E - B - D
-    avg_inter_split_pae = sum_inter_split_pae / inter_slice_size
-
-    sum_intra_split_pae = F + H - C - G - 2 * sum_inter_split_pae
-    avg_intra_split_pae = sum_intra_split_pae / (2 * (test_slice_len * (pae_cumsum.shape[0] - 1) - inter_slice_size))
-
-    avg_inter_split_pae_naive = torch.mean(block_matrix[test_slice, test_slice])
-    first_cross_term = block_matrix[test_slice, 0:test_slice.start]
-    second_cross_term = block_matrix[test_slice, test_slice.stop:]
-    third_cross_term = block_matrix[0:test_slice.start, test_slice]
-    fourth_cross_term = block_matrix[test_slice.stop:, test_slice]
-    sum_intra_split_pae_naive = first_cross_term.sum() + second_cross_term.sum() + third_cross_term.sum() + fourth_cross_term.sum()
-    avg_intra_split_pae_naive = (
-                                  first_cross_term.sum()
-                                  + second_cross_term.sum()
-                                  + third_cross_term.sum()
-                                  + fourth_cross_term.sum()
-                          ) / (
-                                  first_cross_term.numel()
-                                  + second_cross_term.numel()
-                                  + third_cross_term.numel()
-                                  + fourth_cross_term.numel()
-                          )
-
-    assert torch.isclose(torch.scalar_tensor(avg_inter_split_pae), avg_inter_split_pae_naive)
-    assert torch.isclose(sum_intra_split_pae, sum_intra_split_pae_naive)
-    assert torch.isclose(torch.scalar_tensor(avg_intra_split_pae), avg_intra_split_pae_naive)
-
-
-    naive_result = torch.scalar_tensor(inter_vs_intra_pae_score_naive(block_matrix, test_slice))
-    cumsum_result = 0.5 * torch.scalar_tensor(inter_vs_intra_pae_score(pae_cumsum, test_slice))
-
-    assert torch.isclose(naive_result, cumsum_result).all()
-
-
-
-    
-def inter_vs_intra_pae_score_naive(pae_array: torch.Tensor, test_slice: slice) -> float:
-
-    assert test_slice.start >= 0
-    assert test_slice.stop <= pae_array.shape[0]
-
-    avg_inter_split_pae = torch.mean(pae_array[test_slice, test_slice])
-    first_cross_term = pae_array[test_slice, 0:test_slice.start]
-    second_cross_term = pae_array[test_slice, test_slice.stop:]
-    third_cross_term = pae_array[0:test_slice.start, test_slice]
-    fourth_cross_term = pae_array[test_slice.stop:, test_slice]
-
-
-    avg_intra_split_pae = (
-                                  first_cross_term.sum()
-                                  + second_cross_term.sum()
-                                  + third_cross_term.sum()
-                                  + fourth_cross_term.sum()
-                          ) / (
-                                  first_cross_term.numel()
-                                  + second_cross_term.numel()
-                                  + third_cross_term.numel()
-                                  + fourth_cross_term.numel()
-                          )
-
-    pae_region_scale_factor = avg_intra_split_pae / (
-            avg_inter_split_pae + 1e-9
-    )
-
-    return pae_region_scale_factor
