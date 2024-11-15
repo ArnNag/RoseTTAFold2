@@ -26,14 +26,10 @@ torch.backends.cuda.preferred_linalg_library(
     None
 )
 
-assert (map_name is None) + (pdb_name is None) == 1
+assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
-
-# for name, module in pred.model.named_modules():
-#     if not isinstance(module, torch.jit.ScriptModule):
-#         module.register_forward_pre_hook(nan_check_hook)
 
 nseqs_full = 2048
 n_templ = 1
