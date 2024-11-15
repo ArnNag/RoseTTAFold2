@@ -28,22 +28,6 @@ torch.backends.cuda.preferred_linalg_library(
 
 assert (map_name is None) + (pdb_name is None) == 1
 
-def nan_check_hook(module, inputs):
-    def check_tensor(tensor, name):
-        if isinstance(tensor, torch.Tensor):
-            if tensor.shape[-2:] == torch.Size([27, 3]):
-                # positions tensor contains NaNs for undefined atoms. don't want to error on these.
-                if torch.isnan(tensor[...,1,:]).any():  # first atom
-                    raise RuntimeError(f"NaN detected in first atom of {name} to {type(module).__name__}")
-            elif torch.isnan(tensor).any():
-                raise RuntimeError(f"NaN detected in {name} to {type(module).__name__}")
-
-    if isinstance(inputs, tuple):
-        for idx, input_tensor in enumerate(inputs):
-            check_tensor(input_tensor, f"input[{idx}]")
-    else:
-        check_tensor(inputs, "input")
-
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
 
@@ -261,6 +245,7 @@ with torch.no_grad():
             splits_with_ends = [0]
             splits_with_ends.extend(splits)
             splits_with_ends.append(len(logits_pae[0]))
+            new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
@@ -306,11 +291,16 @@ with torch.no_grad():
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
-                    new_mask[start_idx:end_idx] = False
+                    new_mask_by_split[split_idx] = False
 
-            clash_mask = check_clash(new_xyz, splits_with_ends, fit_scores_by_split, clash_threshold=0.5)
+            clash_mask_by_split = check_clash(new_xyz, splits_with_ends, fit_scores_by_split, clash_threshold=0.5)
 
-            new_mask = torch.logical_and(new_mask, clash_mask)
+            new_mask_by_split = torch.logical_and(new_mask_by_split, clash_mask_by_split)
+
+            for split_idx in range(len(splits_with_ends) - 1):
+                start_idx = splits_with_ends[split_idx]
+                end_idx = splits_with_ends[split_idx + 1]
+                new_mask[start_idx:end_idx, :] = new_mask_by_split[split_idx]
 
             new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}.pdb"
             util.writepdb(

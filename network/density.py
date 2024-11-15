@@ -196,12 +196,10 @@ def check_clash(xyz: torch.Tensor, splits_with_ends: list[int], fit_scores_by_sp
         if len(component) > 1:
             splits_to_mask.append(min((split for split in component), key=lambda split: fit_scores_by_split[split]))
 
-    mask = torch.full((len(xyz),), True)
+    mask = torch.full((len(splits_with_ends) - 1,), True)
 
     for split_idx_i in range(len(splits_to_mask)):
-        split_start_i = splits_with_ends[split_idx_i]
-        split_end_i = splits_with_ends[split_idx_i + 1]
-        mask[split_start_i:split_end_i] = False
+        mask[split_idx_i] = False
 
     return mask
 
