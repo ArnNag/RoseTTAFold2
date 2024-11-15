@@ -141,7 +141,7 @@ def parse_pdb_w_b_factor(filename):
 
     # indices of residues observed in the structure
     idx_s = [int(l[22:26]) for l in lines if l[:4] == "ATOM" and l[12:16].strip() == "CA"]
-    b_factors = [int(l[60:66]) for l in lines if l[:4] == "ATOM" and l[12:16].strip() == "CA"]
+    b_factors = [float(l[60:66]) for l in lines if l[:4] == "ATOM" and l[12:16].strip() == "CA"]
 
     # 4 BB + up to 10 SC atoms
     xyz = np.full((len(idx_s), 14, 3), np.nan, dtype=np.float32)
