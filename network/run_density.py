@@ -3,7 +3,7 @@ import glob
 import torch
 from predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
 from chemical import INIT_CRDS
-from parsers import parse_a3m, parse_pdb_w_seq, read_template_pdb
+from parsers import parse_a3m, parse_pdb_w_seq, read_template_pdb, parse_pdb_w_b_factor
 from data_loader import merge_a3m_hetero
 from kinematics import xyz_to_t2d
 import util
@@ -249,12 +249,13 @@ with torch.no_grad():
 
         if map_name is not None and i_cycle == 0:
             from pyrosetta import rosetta, Pose, pose_from_pdb
-            from density import split_by_pae
+            from density import split_by_pae, check_clash
             import shutil
 
             mapfile = f"map/{map_name}.map"
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
             new_xyz = torch.zeros_like(xyz_prev)
+            fit_scores_by_split = list()
             splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
             splits_with_ends = [0]
@@ -287,9 +288,9 @@ with torch.no_grad():
                     hit = j + 1
                     next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
-                new_xyz[start_idx:end_idx, :, :] = torch.from_numpy(
-                    parse_pdb_w_seq(after_dock_file)[0]
-                )
+                loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
+                new_xyz[start_idx:end_idx, :, :] = torch.from_numpy(loaded_xyz)
+                fit_scores_by_split.append(loaded_fit_score.mean())
 
             long_jump_threshold = 50.
             is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
@@ -306,6 +307,10 @@ with torch.no_grad():
                 end_idx = splits_with_ends[split_idx + 1]
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
                     new_mask[start_idx:end_idx] = False
+
+            clash_mask = check_clash(new_xyz, splits_with_ends, fit_scores_by_split, clash_threshold=0.5)
+
+            new_mask = torch.logical_and(new_mask, clash_mask)
 
             new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}.pdb"
             util.writepdb(
@@ -337,7 +342,7 @@ with torch.no_grad():
 
         if i_cycle == 0:
             if use_template:
-                conf = torch.where(new_mask.all(dim=-1), 1.0, 0.0)
+                conf = torch.where(new_mask.all(dim=-1), 0.5, 0.0)
                 seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
                 t1d = torch.cat((seq_onehot, conf[:, None]), -1).unsqueeze(0)
                 xyz_t = new_xyz[None, :, :, :]  # (T, L, A, X)
