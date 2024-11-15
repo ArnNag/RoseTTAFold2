@@ -21,9 +21,9 @@ torch.backends.cuda.preferred_linalg_library(
     True,
     False,
     True,
-    "test_globin",
-    None,
-    "globin"
+    "atpbind",
+    "emd_14914",
+    None
 )
 
 assert (map_name is None) + (pdb_name is None) == 1
@@ -243,7 +243,7 @@ with torch.no_grad():
             lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
             pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
         )
-        util.writepdb(f"{out_prefix}_{i_cycle}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
+        util.writepdb(f"{out_prefix}_cycle_{i_cycle}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
         new_mask = torch.full_like(mask_prev_orig, True)
 
