@@ -39,7 +39,7 @@ subcrop = -1
 topk = 1536
 B = 1
 pred.xyz_converter = pred.xyz_converter.cpu()
-out_prefix = f"test_predict_{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
+out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
 ###
 # pass 1, combined MSA
@@ -217,13 +217,13 @@ with torch.no_grad():
 
         torch.cuda.empty_cache()
 
-        metrics_file = f"test_{a3m_name}_{map_name}_cycle_{i_cycle}"
+        metrics_file = f"cycle_{i_cycle}_{out_suffix}"
         np.savez_compressed(
             metrics_file,
             lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
             pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
         )
-        util.writepdb(f"{out_prefix}_cycle_{i_cycle}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
+        util.writepdb(f"before_dock_cycle_{i_cycle}_full_{out_suffix}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
         new_mask = torch.full_like(mask_prev_orig, True)
 
@@ -248,7 +248,7 @@ with torch.no_grad():
                 print(f"{split_idx=}")
                 print(f"{start_idx=}")
                 print(f"{end_idx=}")
-                before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
+                before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
                 util.writepdb(
                     before_dock_file,
                     xyz_prev[start_idx:end_idx, :, :],
@@ -258,7 +258,7 @@ with torch.no_grad():
                 )
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                 dock_into_dens.apply(pose_before_fit)
-                after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
+                after_dock_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_best_{out_suffix}.pdb"
                 shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
 
                 # grab top 'count' poses
@@ -267,7 +267,7 @@ with torch.no_grad():
                 allfiles.pop(0)
                 for j, file in enumerate(allfiles):
                     hit = j + 1
-                    next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
+                    next_best_hit_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}_{out_suffix}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
                 loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
                 new_xyz[start_idx:end_idx, :, :] = torch.from_numpy(loaded_xyz)
@@ -298,7 +298,7 @@ with torch.no_grad():
                 end_idx = splits_with_ends[split_idx + 1]
                 new_mask[start_idx:end_idx, :] = new_mask_by_split[split_idx]
 
-            new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}.pdb"
+            new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}_{out_suffix}.pdb"
             util.writepdb(
                 new_pdb_path_before_realign,
                 new_xyz,
@@ -308,7 +308,7 @@ with torch.no_grad():
             )
             new_xyz = util.realign_missing(new_xyz, new_mask, sigma=1e-1)
 
-            new_pdb_path = f"new_xyz_cycle_{i_cycle}.pdb"
+            new_pdb_path = f"new_xyz_after_realign_cycle_{i_cycle}_{out_suffix}.pdb"
             util.writepdb(
                 new_pdb_path,
                 new_xyz,
