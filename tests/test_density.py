@@ -9,6 +9,8 @@ import torch
 import numpy as np
 from icecream import ic
 
+from network.util import realign_missing
+
 L = 5
 MAX_NUM_ATOMS_PER_RESIDUE = 27
 NUM_EUCLIDEAN_DIMS = 3
@@ -1077,3 +1079,24 @@ def inter_vs_intra_pae_score_naive(pae_array: torch.Tensor, test_slice: slice) -
     )
 
     return pae_region_scale_factor
+
+
+def test_plddt_trim():
+    region_length = 33
+    high_plddt_region = torch.full((region_length, ), 0.95)
+    low_plddt_region = torch.full((region_length, ), 0.5)
+    plddts = torch.cat([high_plddt_region, low_plddt_region, high_plddt_region])
+    xyz = torch.randn((plddts.shape[0], MAX_AMINO_ACID_IDX, NUM_EUCLIDEAN_DIMS))
+
+    remaining_idxs = torch.where(plddts > 0.8)
+    remaining_xyz = xyz[remaining_idxs]
+    remaining_xyz_docked = remaining_xyz + 5
+
+    docked_xyz = torch.full_like(xyz, torch.nan)
+    docked_xyz[remaining_idxs] = remaining_xyz_docked
+    mask_t = ~torch.isnan(docked_xyz).all(dim=-1)
+    realigned_xyz = realign_missing(docked_xyz, mask_t, sigma=0.2)
+
+    print(docked_xyz[50])
+    print(realigned_xyz[50])
+    print(realigned_xyz[51])
