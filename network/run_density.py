@@ -1,10 +1,9 @@
 import glob
 
 import torch
-from predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
+from predict import Predictor, pae_unbin
 from chemical import INIT_CRDS
-from parsers import parse_a3m, parse_pdb_w_seq, read_template_pdb, parse_pdb_w_b_factor
-from data_loader import merge_a3m_hetero
+from parsers import parse_a3m, parse_pdb_w_seq, parse_pdb_w_b_factor
 from kinematics import xyz_to_t2d
 import util
 import numpy as np
