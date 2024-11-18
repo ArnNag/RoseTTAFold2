@@ -871,6 +871,62 @@ def test_long_split():
     new_xyz = util.realign_missing(new_xyz[0, :, :, :], new_mask[0, :, :], sigma=1e-1).unsqueeze(0)
 
 
+def test_check_clash():
+    clash_threshold = 0.2
+    chain_length = 682
+    splits = [104, 204, 312, 445, 552, 676]
+    new_xyz = torch.zeros(chain_length, MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS)
+    splits_with_ends = [0]
+    splits_with_ends.extend(splits)
+    splits_with_ends.append(chain_length)
+    for split_idx in range(len(splits_with_ends) - 1):
+        split_start = splits_with_ends[split_idx]
+        split_end = splits_with_ends[split_idx + 1]
+        torch.normal(torch.tensor([0, 0, split_idx % 5]), 1e-7, out=new_xyz[split_start:split_end])
+
+    from matplotlib import pyplot as plt
+    plt.plot(new_xyz[:, :, 2])
+    plt.savefig("test_check_clash.png")
+
+    import networkx as nx
+
+    # Create a graph
+    G = nx.Graph()
+    # Add nodes
+    G.add_nodes_from(range(len(splits) + 1))
+
+    for split_idx_i in range(1, len(splits) + 1):
+        split_start_i = splits_with_ends[split_idx_i]
+        split_end_i = splits_with_ends[split_idx_i + 1]
+        for split_idx_j in range(split_idx_i):
+            split_start_j = splits_with_ends[split_idx_j]
+            split_end_j = splits_with_ends[split_idx_j + 1]
+            all_inter_dist = torch.cdist(new_xyz[split_start_i:split_end_i, :, :].swapaxes(0, 1), new_xyz[split_start_j:split_end_j, :, :].swapaxes(0, 1))
+            if torch.any(all_inter_dist < clash_threshold):
+                G.add_edge(split_idx_i, split_idx_j)
+
+    splits_to_mask: list[int] = []
+    for component in nx.components.connected_components(G):
+        if len(component) > 1:
+            splits_to_mask.append(min((split for split in component), key=lambda split: split))
+
+    mask = torch.full((chain_length, ), True)
+
+    for split_idx_i in range(len(splits_to_mask)):
+        split_start_i = splits_with_ends[split_idx_i]
+        split_end_i = splits_with_ends[split_idx_i + 1]
+        mask[split_start_i:split_end_i] = False
+
+    print(mask)
+
+
+
+
+
+
+
+
+
 def test_split_by_pae():
 
     from network.density import split_by_pae
