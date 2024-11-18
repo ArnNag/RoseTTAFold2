@@ -232,12 +232,13 @@ with torch.no_grad():
             mapfile = f"map/{map_name}.map"
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
             new_xyz = torch.full_like(xyz_prev, torch.nan)
-            fit_scores_by_split = list()
             splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
             splits_with_ends = [0]
             splits_with_ends.extend(splits)
             splits_with_ends.append(len(logits_pae[0]))
+            fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan)
+            mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
             new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
@@ -281,8 +282,9 @@ with torch.no_grad():
                     next_best_hit_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}_{out_suffix}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
                 loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
-                new_xyz[start_idx:end_idx, :, :][remaining_idxs] = torch.from_numpy(loaded_xyz)
-                fit_scores_by_split.append(loaded_fit_score.mean())
+                new_xyz[start_idx:end_idx, :, :][remaining_idxs] = torch.from_numpy(loaded_xyz).to(new_xyz)
+                fit_score_by_residue[start_idx:end_idx][remaining_idxs] = loaded_fit_score
+                mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
 
             new_mask = ~torch.isnan(new_xyz).all(dim=-1)
             new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
@@ -303,7 +305,7 @@ with torch.no_grad():
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
                     new_mask_by_split[split_idx] = False
 
-            clash_mask_by_split = check_clash(new_xyz, splits_with_ends, fit_scores_by_split, clash_threshold=0.5)
+            clash_mask_by_split = check_clash(new_xyz, splits_with_ends, mean_fit_score_by_split, clash_threshold=0.5)
 
             new_mask_by_split = torch.logical_and(new_mask_by_split, clash_mask_by_split)
 
