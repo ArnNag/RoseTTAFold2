@@ -224,8 +224,6 @@ with torch.no_grad():
         )
         util.writepdb(f"before_dock_cycle_{i_cycle}_full_{out_suffix}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
-        new_mask = torch.full_like(mask_prev_orig, True)
-
         if map_name is not None and i_cycle == 0:
             from pyrosetta import rosetta, Pose, pose_from_pdb
             from density import split_by_pae, check_clash
@@ -233,7 +231,7 @@ with torch.no_grad():
 
             mapfile = f"map/{map_name}.map"
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-            new_xyz = torch.zeros_like(xyz_prev)
+            new_xyz = torch.full_like(xyz_prev, torch.nan)
             fit_scores_by_split = list()
             splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
@@ -247,14 +245,28 @@ with torch.no_grad():
                 print(f"{split_idx=}")
                 print(f"{start_idx=}")
                 print(f"{end_idx=}")
-                before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
+
+                before_trim_file = f"before_trim_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
                 util.writepdb(
-                    before_dock_file,
+                    before_trim_file,
                     xyz_prev[start_idx:end_idx, :, :],
                     seq[start_idx:end_idx],
                     [end_idx - start_idx],
                     bfacts=100 * pred_lddt[0, start_idx:end_idx],
                 )
+
+                plddt_cutoff = 0.8
+                remaining_idxs = torch.where(pred_lddt[0, start_idx:end_idx] > plddt_cutoff)
+
+                before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
+                util.writepdb(
+                    before_dock_file,
+                    xyz_prev[start_idx:end_idx, :, :][remaining_idxs],
+                    seq[start_idx:end_idx][remaining_idxs],
+                    [len(remaining_idxs)],
+                    bfacts=100 * pred_lddt[0, start_idx:end_idx][remaining_idxs],
+                )
+
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                 dock_into_dens.apply(pose_before_fit)
                 after_dock_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_best_{out_suffix}.pdb"
@@ -269,8 +281,11 @@ with torch.no_grad():
                     next_best_hit_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}_{out_suffix}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
                 loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
-                new_xyz[start_idx:end_idx, :, :] = torch.from_numpy(loaded_xyz)
+                new_xyz[start_idx:end_idx, :, :][remaining_idxs] = torch.from_numpy(loaded_xyz)
                 fit_scores_by_split.append(loaded_fit_score.mean())
+
+            new_mask = ~torch.isnan(new_xyz).all(dim=-1)
+            new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
 
             long_jump_threshold = 50.
             is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
@@ -295,7 +310,7 @@ with torch.no_grad():
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
-                new_mask[start_idx:end_idx, :] = new_mask_by_split[split_idx]
+                new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :], new_mask_by_split[split_idx])
 
             new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}_{out_suffix}.pdb"
             util.writepdb(
@@ -305,7 +320,7 @@ with torch.no_grad():
                 Ls,
                 bfacts=100 * pred_lddt[0],
             )
-            new_xyz = util.realign_missing(new_xyz, new_mask, sigma=1e-1)
+            new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.5)
 
             new_pdb_path = f"new_xyz_after_realign_cycle_{i_cycle}_{out_suffix}.pdb"
             util.writepdb(
