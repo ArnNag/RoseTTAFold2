@@ -260,6 +260,11 @@ with torch.no_grad():
                 remaining_idxs = torch.where(pred_lddt[0, start_idx:end_idx] > plddt_cutoff)
 
                 before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
+                print(f"{xyz_prev.shape=}")
+                print(f"{xyz_prev[start_idx:end_idx, :, :][remaining_idxs].shape=}")
+                print(f"{seq.shape=}")
+                print(f"{seq[start_idx:end_idx][remaining_idxs].shape=}")
+                print(f"{len(remaining_idxs)=}")
                 util.writepdb(
                     before_dock_file,
                     xyz_prev[start_idx:end_idx, :, :][remaining_idxs],
@@ -283,7 +288,7 @@ with torch.no_grad():
                     shutil.copyfile(file, next_best_hit_file)
                 loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
                 new_xyz[start_idx:end_idx, :, :][remaining_idxs] = torch.from_numpy(loaded_xyz).to(new_xyz)
-                fit_score_by_residue[start_idx:end_idx][remaining_idxs] = loaded_fit_score
+                fit_score_by_residue[start_idx:end_idx][remaining_idxs] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
                 mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
 
             new_mask = ~torch.isnan(new_xyz).all(dim=-1)
