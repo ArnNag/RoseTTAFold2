@@ -20,7 +20,7 @@ torch.backends.cuda.preferred_linalg_library(
     True,
     False,
     True,
-    "atpbind",
+    "globin",
     "emd_14914",
     None,
 )
@@ -237,13 +237,19 @@ with torch.no_grad():
             splits_with_ends.append(len(logits_pae[0]))
             fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan)
             mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
-            new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
                 print(f"{split_idx=}")
                 print(f"{start_idx=}")
                 print(f"{end_idx=}")
+
+                plddt_cutoff = 0.8
+                remaining_idxs = torch.nonzero(pred_lddt[0, start_idx:end_idx] > plddt_cutoff).flatten()
+
+                min_residues_per_dock = 20
+                if len(remaining_idxs) < min_residues_per_dock:
+                    continue
 
                 before_trim_file = f"before_trim_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
                 util.writepdb(
@@ -253,9 +259,6 @@ with torch.no_grad():
                     [end_idx - start_idx],
                     bfacts=100 * pred_lddt[0, start_idx:end_idx],
                 )
-
-                plddt_cutoff = 0.8
-                remaining_idxs = torch.nonzero(pred_lddt[0, start_idx:end_idx] > plddt_cutoff).flatten()
 
                 before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
                 util.writepdb(
@@ -286,6 +289,8 @@ with torch.no_grad():
 
             new_mask = ~torch.isnan(new_xyz).all(dim=-1)
             new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
+
+            new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
 
             long_jump_threshold = 50.
             is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
