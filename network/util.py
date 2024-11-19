@@ -42,6 +42,10 @@ def center_and_realign_missing(xyz, mask_t):
 def realign_missing(xyz: torch.Tensor, mask_t: torch.Tensor, sigma: float):
     # xyz: (L, 27, 3)
     # mask_t: (L, 27)
+
+    if torch.all(~mask_t):
+        raise ValueError("All residues are masked.")
+
     L = xyz.shape[0]
 
     mask = mask_t[:, :3].all(dim=-1)  # True for valid atom (L)
@@ -52,7 +56,7 @@ def realign_missing(xyz: torch.Tensor, mask_t: torch.Tensor, sigma: float):
     seqmap = torch.argmin(seqmap, dim=-1)  # L
     idx = torch.gather(exist_in_xyz, 0, seqmap)
     offset_CA = torch.gather(xyz[:, 1], 0, idx.reshape(L, 1).expand(-1, 3))
-    noise_positions = torch.logical_and(~mask.view(L, 1, 1), ~xyz.isnan())
+    noise_positions = torch.logical_or(~mask.view(L, 1, 1), xyz.isnan())
     xyz = torch.where(noise_positions, torch.randn(L, 1, 3, device=xyz.device) * sigma + offset_CA.reshape(L, 1, 3), xyz)
 
     return xyz
