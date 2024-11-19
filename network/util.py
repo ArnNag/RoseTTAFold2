@@ -189,7 +189,6 @@ def writepdb(filename, atoms, seq, Ls, idx_pdb=None, bfacts=None):
 
         for j,atm_j in enumerate(atms):
             if (j<natoms and atm_j is not None and not torch.isnan(atomscpu[i,j,:]).any()):
-                print(f"{chn_idx=}")
                 f.write ("%-6s%5s %4s %3s %s%4d    %8.3f%8.3f%8.3f%6.2f%6.2f\n"%(
                     "ATOM", ctr, atm_j, num2aa[s],
                     PDB_CHAIN_IDS[chn_idx], res_idx+1, atomscpu[i,j,0], atomscpu[i,j,1], atomscpu[i,j,2],
@@ -198,7 +197,6 @@ def writepdb(filename, atoms, seq, Ls, idx_pdb=None, bfacts=None):
 
         res_idx += 1
         if (chn_idx < len(Ls) and res_idx == Ls[chn_idx]):
-            print(f"{res_idx=}")
             chn_idx += 1
             res_idx = 0
 

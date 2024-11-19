@@ -22,7 +22,7 @@ torch.backends.cuda.preferred_linalg_library(
     True,
     "atpbind",
     "emd_14914",
-    None
+    None,
 )
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
@@ -255,14 +255,9 @@ with torch.no_grad():
                 )
 
                 plddt_cutoff = 0.8
-                remaining_idxs = torch.where(pred_lddt[0, start_idx:end_idx] > plddt_cutoff)
+                remaining_idxs = torch.nonzero(pred_lddt[0, start_idx:end_idx] > plddt_cutoff).flatten()
 
                 before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
-                print(f"{xyz_prev.shape=}")
-                print(f"{xyz_prev[start_idx:end_idx, :, :][remaining_idxs].shape=}")
-                print(f"{seq.shape=}")
-                print(f"{seq[start_idx:end_idx][remaining_idxs].shape=}")
-                print(f"{len(remaining_idxs)=}")
                 util.writepdb(
                     before_dock_file,
                     xyz_prev[start_idx:end_idx, :, :][remaining_idxs],
@@ -344,6 +339,7 @@ with torch.no_grad():
                     0
                 ]
             ).to(xyz_prev)
+            new_mask = torch.full((len(new_xyz), 27), True)
 
         if i_cycle == 0:
             if use_template:
