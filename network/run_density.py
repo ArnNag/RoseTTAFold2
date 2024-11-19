@@ -209,8 +209,6 @@ with torch.no_grad():
         pred_lddt = pred_lddt.sum(dim=1)
         logits_pae = pae_unbin(logits_pae.half())
 
-        # TODO: what is the point of the new singleton dimension (N) in xyz_prev_prev[None]?
-
         print(
             f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f}"
         )
