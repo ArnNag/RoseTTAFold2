@@ -32,11 +32,12 @@ pred = Predictor(model, torch.device("cuda:0"))
 
 nseqs_full = 2048
 n_templ = 1
-n_recycles = 3
+n_recycles = 6
 nseqs = 256
 subcrop = -1
 topk = 1536
 B = 1
+dock_cycle = 3
 pred.xyz_converter = pred.xyz_converter.cpu()
 out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
@@ -222,7 +223,7 @@ with torch.no_grad():
         )
         util.writepdb(f"before_dock_cycle_{i_cycle}_full_{out_suffix}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
-        if map_name is not None and i_cycle == 0:
+        if map_name is not None and i_cycle == dock_cycle:
             from pyrosetta import rosetta, Pose, pose_from_pdb
             from density import split_by_pae, check_clash
             import shutil
@@ -244,7 +245,7 @@ with torch.no_grad():
                 print(f"{start_idx=}")
                 print(f"{end_idx=}")
 
-                plddt_cutoff = 0.8
+                plddt_cutoff = 0.7
                 remaining_idxs = torch.nonzero(pred_lddt[0, start_idx:end_idx] > plddt_cutoff).flatten()
 
                 min_residues_per_dock = 20
@@ -346,7 +347,7 @@ with torch.no_grad():
             ).to(xyz_prev)
             new_mask = torch.full((len(new_xyz), 27), True)
 
-        if i_cycle == 0:
+        if i_cycle == dock_cycle:
             if use_template:
                 conf = torch.where(new_mask.all(dim=-1), 0.5, 0.0)
                 seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
