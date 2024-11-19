@@ -1,10 +1,9 @@
 import glob
 
 import torch
-from predict import Predictor, merge_a3m_homo, get_striping_parameters, pae_unbin
+from predict import Predictor, pae_unbin
 from chemical import INIT_CRDS
-from parsers import parse_a3m, parse_pdb_w_seq, read_template_pdb, parse_pdb_w_b_factor
-from data_loader import merge_a3m_hetero
+from parsers import parse_a3m, parse_pdb_w_seq, parse_pdb_w_b_factor
 from kinematics import xyz_to_t2d
 import util
 import numpy as np
@@ -39,7 +38,7 @@ subcrop = -1
 topk = 1536
 B = 1
 pred.xyz_converter = pred.xyz_converter.cpu()
-out_prefix = f"test_predict_{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
+out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
 ###
 # pass 1, combined MSA
@@ -215,15 +214,13 @@ with torch.no_grad():
 
         torch.cuda.empty_cache()
 
-        metrics_file = f"test_{a3m_name}_{map_name}_cycle_{i_cycle}"
+        metrics_file = f"cycle_{i_cycle}_{out_suffix}"
         np.savez_compressed(
             metrics_file,
             lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
             pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
         )
-        util.writepdb(f"{out_prefix}_cycle_{i_cycle}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
-
-        new_mask = torch.full_like(mask_prev_orig, True)
+        util.writepdb(f"before_dock_cycle_{i_cycle}_full_{out_suffix}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
         if map_name is not None and i_cycle == 0:
             from pyrosetta import rosetta, Pose, pose_from_pdb
@@ -232,13 +229,14 @@ with torch.no_grad():
 
             mapfile = f"map/{map_name}.map"
             rosetta.core.scoring.electron_density.getDensityMap(mapfile)
-            new_xyz = torch.zeros_like(xyz_prev)
-            fit_scores_by_split = list()
+            new_xyz = torch.full_like(xyz_prev, torch.nan)
             splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
             splits_with_ends = [0]
             splits_with_ends.extend(splits)
             splits_with_ends.append(len(logits_pae[0]))
+            fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan)
+            mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
             new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
@@ -246,17 +244,36 @@ with torch.no_grad():
                 print(f"{split_idx=}")
                 print(f"{start_idx=}")
                 print(f"{end_idx=}")
-                before_dock_file = f"test_{a3m_name}_{map_name}_before_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
+
+                before_trim_file = f"before_trim_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
                 util.writepdb(
-                    before_dock_file,
+                    before_trim_file,
                     xyz_prev[start_idx:end_idx, :, :],
                     seq[start_idx:end_idx],
                     [end_idx - start_idx],
                     bfacts=100 * pred_lddt[0, start_idx:end_idx],
                 )
+
+                plddt_cutoff = 0.8
+                remaining_idxs = torch.where(pred_lddt[0, start_idx:end_idx] > plddt_cutoff)
+
+                before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
+                print(f"{xyz_prev.shape=}")
+                print(f"{xyz_prev[start_idx:end_idx, :, :][remaining_idxs].shape=}")
+                print(f"{seq.shape=}")
+                print(f"{seq[start_idx:end_idx][remaining_idxs].shape=}")
+                print(f"{len(remaining_idxs)=}")
+                util.writepdb(
+                    before_dock_file,
+                    xyz_prev[start_idx:end_idx, :, :][remaining_idxs],
+                    seq[start_idx:end_idx][remaining_idxs],
+                    [len(remaining_idxs)],
+                    bfacts=100 * pred_lddt[0, start_idx:end_idx][remaining_idxs],
+                )
+
                 pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                 dock_into_dens.apply(pose_before_fit)
-                after_dock_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
+                after_dock_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_best_{out_suffix}.pdb"
                 shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
 
                 # grab top 'count' poses
@@ -265,11 +282,15 @@ with torch.no_grad():
                 allfiles.pop(0)
                 for j, file in enumerate(allfiles):
                     hit = j + 1
-                    next_best_hit_file = f"test_{a3m_name}_{map_name}_after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
+                    next_best_hit_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}_{out_suffix}.pdb"
                     shutil.copyfile(file, next_best_hit_file)
                 loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
-                new_xyz[start_idx:end_idx, :, :] = torch.from_numpy(loaded_xyz)
-                fit_scores_by_split.append(loaded_fit_score.mean())
+                new_xyz[start_idx:end_idx, :, :][remaining_idxs] = torch.from_numpy(loaded_xyz).to(new_xyz)
+                fit_score_by_residue[start_idx:end_idx][remaining_idxs] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
+                mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
+
+            new_mask = ~torch.isnan(new_xyz).all(dim=-1)
+            new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
 
             long_jump_threshold = 50.
             is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
@@ -287,16 +308,16 @@ with torch.no_grad():
                 if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
                     new_mask_by_split[split_idx] = False
 
-            clash_mask_by_split = check_clash(new_xyz, splits_with_ends, fit_scores_by_split, clash_threshold=0.5)
+            clash_mask_by_split = check_clash(new_xyz, splits_with_ends, mean_fit_score_by_split, clash_threshold=0.5)
 
             new_mask_by_split = torch.logical_and(new_mask_by_split, clash_mask_by_split)
 
             for split_idx in range(len(splits_with_ends) - 1):
                 start_idx = splits_with_ends[split_idx]
                 end_idx = splits_with_ends[split_idx + 1]
-                new_mask[start_idx:end_idx, :] = new_mask_by_split[split_idx]
+                new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :], new_mask_by_split[split_idx])
 
-            new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}.pdb"
+            new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}_{out_suffix}.pdb"
             util.writepdb(
                 new_pdb_path_before_realign,
                 new_xyz,
@@ -304,9 +325,9 @@ with torch.no_grad():
                 Ls,
                 bfacts=100 * pred_lddt[0],
             )
-            new_xyz = util.realign_missing(new_xyz, new_mask, sigma=1e-1)
+            new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.5)
 
-            new_pdb_path = f"new_xyz_cycle_{i_cycle}.pdb"
+            new_pdb_path = f"new_xyz_after_realign_cycle_{i_cycle}_{out_suffix}.pdb"
             util.writepdb(
                 new_pdb_path,
                 new_xyz,
