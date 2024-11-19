@@ -168,10 +168,10 @@ def split_by_pae(
     )
 
 
-def check_clash(xyz: torch.Tensor, splits_with_ends: list[int], fit_scores_by_split: list[int], clash_threshold: float) -> torch.Tensor:
+def check_clash(xyz: torch.Tensor, splits_with_ends: list[int], fit_scores_by_split: torch.Tensor, clash_threshold: float) -> torch.Tensor:
     """
-    xyz: shape (L, MAX_NUMBER_OF_ATOMS, NUM_EUCLIDEAN_DIMS)
-    fit_scores_by_split: length (len(splits_with_ends) - 1)
+    xyz: shape [L, MAX_NUMBER_OF_ATOMS, NUM_EUCLIDEAN_DIMS]
+    fit_scores_by_split: shape [len(splits_with_ends) - 1]
     """
     import networkx as nx
 
