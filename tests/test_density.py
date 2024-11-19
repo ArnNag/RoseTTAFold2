@@ -9,14 +9,12 @@ import torch
 import numpy as np
 from icecream import ic
 
-from network.util import realign_missing
+from network import util
 
 L = 5
 MAX_NUM_ATOMS_PER_RESIDUE = 27
 NUM_EUCLIDEAN_DIMS = 3
-MAX_AMINO_ACID_IDX = (
-    10  # there are more amino acids than this but it works for the test
-)
+MAX_AMINO_ACID_IDX = 20
 
 import sys
 
@@ -1105,7 +1103,7 @@ def test_cumsum_vs_naive_scoring():
 
 
 
-    
+
 def inter_vs_intra_pae_score_naive(pae_array: torch.Tensor, test_slice: slice) -> float:
 
     assert test_slice.start >= 0
@@ -1141,18 +1139,26 @@ def test_plddt_trim():
     region_length = 33
     high_plddt_region = torch.full((region_length, ), 0.95)
     low_plddt_region = torch.full((region_length, ), 0.5)
-    plddts = torch.cat([high_plddt_region, low_plddt_region, high_plddt_region])
-    xyz = torch.randn((plddts.shape[0], MAX_AMINO_ACID_IDX, NUM_EUCLIDEAN_DIMS))
+    pred_lddt = torch.cat([high_plddt_region, low_plddt_region, high_plddt_region])
+    xyz = torch.randn((pred_lddt.shape[0], MAX_NUM_ATOMS_PER_RESIDUE, NUM_EUCLIDEAN_DIMS))
 
-    remaining_idxs = torch.where(plddts > 0.8)
+    plddt_cutoff = 0.8
+    start_idx = 20
+    end_idx = 80
+    remaining_idxs = torch.where(pred_lddt[start_idx:end_idx] > plddt_cutoff)
     remaining_xyz = xyz[remaining_idxs]
     remaining_xyz_docked = remaining_xyz + 5
 
     docked_xyz = torch.full_like(xyz, torch.nan)
     docked_xyz[remaining_idxs] = remaining_xyz_docked
     mask_t = ~torch.isnan(docked_xyz).all(dim=-1)
-    realigned_xyz = realign_missing(docked_xyz, mask_t, sigma=0.2)
+    realigned_xyz = util.realign_missing(docked_xyz, mask_t, sigma=0.2)
 
-    print(docked_xyz[50])
-    print(realigned_xyz[50])
-    print(realigned_xyz[51])
+    seq = torch.randint(0, MAX_AMINO_ACID_IDX, (len(xyz),))
+    util.writepdb(
+        "test_plddt_trim.pdb",
+        xyz[start_idx:end_idx, :, :][remaining_idxs],
+        seq[start_idx:end_idx][remaining_idxs],
+        [len(remaining_idxs)],
+        bfacts=100 * pred_lddt[start_idx:end_idx][remaining_idxs],
+    )
