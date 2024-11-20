@@ -21,8 +21,8 @@ torch.backends.cuda.preferred_linalg_library(
     False,
     True,
     "globin",
-    "emd_14914",
     None,
+    "globin",
 )
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
@@ -32,12 +32,12 @@ pred = Predictor(model, torch.device("cuda:0"))
 
 nseqs_full = 2048
 n_templ = 1
-n_recycles = 6
+n_recycles = 3
 nseqs = 256
 subcrop = -1
 topk = 1536
 B = 1
-dock_cycle = 3
+dock_cycle = 0
 pred.xyz_converter = pred.xyz_converter.cpu()
 out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{use_template=}_{use_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
@@ -133,6 +133,8 @@ with torch.no_grad():
         dock_into_dens: (
             rosetta.protocols.electron_density.DockFragmentsIntoDensityMover
         ) = setup_docking_mover(counts=1)
+        mapfile = f"map/{map_name}.map"
+        rosetta.core.scoring.electron_density.getDensityMap(mapfile)
 
     for i_cycle in range(n_recycles + 1):
 
@@ -228,8 +230,6 @@ with torch.no_grad():
             from density import split_by_pae, check_clash
             import shutil
 
-            mapfile = f"map/{map_name}.map"
-            rosetta.core.scoring.electron_density.getDensityMap(mapfile)
             new_xyz = torch.full_like(xyz_prev, torch.nan)
             splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=100)
             print(f"{splits=}")
@@ -245,7 +245,7 @@ with torch.no_grad():
                 print(f"{start_idx=}")
                 print(f"{end_idx=}")
 
-                plddt_cutoff = 0.7
+                plddt_cutoff = 0.5
                 remaining_idxs = torch.nonzero(pred_lddt[0, start_idx:end_idx] > plddt_cutoff).flatten()
 
                 min_residues_per_dock = 20
@@ -345,11 +345,11 @@ with torch.no_grad():
                     0
                 ]
             ).to(xyz_prev)
-            new_mask = torch.full((len(new_xyz), 27), True)
+            new_mask = torch.full((len(new_xyz), 27), True, device=xyz_prev.device)
 
         if i_cycle == dock_cycle:
             if use_template:
-                conf = torch.where(new_mask.all(dim=-1), 0.5, 0.0)
+                conf = torch.where(new_mask.all(dim=-1), 0.5, 0.0).to(seq.device)
                 seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
                 t1d = torch.cat((seq_onehot, conf[:, None]), -1).unsqueeze(0)
                 xyz_t = new_xyz[None, :, :, :]  # (T, L, A, X)
