@@ -58,6 +58,9 @@ xyz_t = (
 
 
 mask_t = torch.full((n_templ, L, 27), False)
+mask_t_2d = mask_t[:, :, :3].all(dim=-1)  # (T, L)
+mask_t_2d = mask_t_2d[:, None] * mask_t_2d[:, :, None]  # (T, L, L)
+
 t1d = torch.nn.functional.one_hot(
     torch.full((n_templ, L), 20).long(), num_classes=21
 ).float()  # all gaps
@@ -84,11 +87,7 @@ xyz_prev = xyz_t[0, :, :, :].to(pred.device)  # select the 0th template
 # index
 idx_pdb = torch.arange(L)[None, :]
 
-mask_t_2d = mask_t[:, :, :3].all(dim=-1)  # (T, L)
-mask_t_2d = mask_t_2d[:, None] * mask_t_2d[:, :, None]  # (T, L, L)
-
 pred.model.eval()
-
 pred.xyz_converter = pred.xyz_converter.to(pred.device)
 pred.lddt_bins = pred.lddt_bins.to(pred.device)
 
@@ -109,7 +108,7 @@ with torch.no_grad():
     msa_prev = None
     pair_prev = None
     state_prev = None
-    mask_recycle = None
+    mask_recycle = mask_t_2d[0, :, :][None, :, :]  # replace template axis with batch axis
 
     if map_name is not None:
         from pyrosetta import init, rosetta
