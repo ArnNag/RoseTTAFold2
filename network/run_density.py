@@ -345,7 +345,14 @@ with torch.no_grad():
                     0
                 ]
             ).to(xyz_prev)
+            splits_with_ends = [0, 100, L]
+            new_mask_by_split = torch.tensor([False, True, False])
+
             new_mask = torch.full((len(new_xyz), 27), True, device=xyz_prev.device)
+            for split_idx in range(len(splits_with_ends) - 1):
+                start_idx = splits_with_ends[split_idx]
+                end_idx = splits_with_ends[split_idx + 1]
+                new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :], new_mask_by_split[split_idx])
 
         if i_cycle == dock_cycle:
             if use_template:
