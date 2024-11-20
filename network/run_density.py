@@ -11,10 +11,6 @@ from torch import nn
 import os
 from icecream import ic
 
-torch.backends.cuda.preferred_linalg_library(
-    backend="magma"
-)  # avoid issue with cuSOLVER when computing SVD
-
 replace_template = True
 replace_xyz_prev = True
 use_state_prev = True
@@ -23,19 +19,19 @@ use_msa = True
 a3m_name = "globin"
 map_name = None
 pdb_name = "globin"
+dock_cycle = 0
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
+out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{replace_template=}_{replace_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
 
 nseqs_full = 2048
-n_recycles = 2
+n_recycles = 4
 nseqs = 256
 topk = 1536
-dock_cycle = 0
 pred.xyz_converter = pred.xyz_converter.cpu()
-out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{replace_template=}_{replace_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 
 ###
 # pass 1, combined MSA
@@ -351,6 +347,7 @@ with torch.no_grad():
 
             if replace_template:
                 conf = torch.where(new_mask.all(dim=-1), 0.5, 0.0).to(seq.device)
+                seq_w_gaps = torch.where(new_mask.all(dim=-1), seq, 20)
                 seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
                 t1d = torch.cat((seq_onehot, conf[:, None]), -1).unsqueeze(0)
                 xyz_t = new_xyz[None, :, :, :]  # (T, L, A, X)
