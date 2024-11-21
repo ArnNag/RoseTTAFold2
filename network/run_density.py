@@ -16,9 +16,9 @@ replace_xyz_prev = True
 use_state_prev = True
 use_pair_prev = True
 use_msa = True
-a3m_name = "globin"
+a3m_name = "atpbind"
 map_name = None
-pdb_name = "globin"
+pdb_name = "atpbind"
 dock_cycle = 0
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
@@ -325,8 +325,15 @@ with torch.no_grad():
                         0
                     ]
                 ).to(xyz_prev)
-                splits_with_ends = [0, 100, 130, L]
-                new_mask_by_split = torch.tensor([True, False, True])
+
+                if pdb_name == "globin":
+                    splits_with_ends = [0, 100, 130, L]
+                    new_mask_by_split = torch.tensor([True, False, True])
+                elif pdb_name == "atpbind":
+                    splits_with_ends = [0, 198, 306, 439, 545, 671, L]
+                    new_mask_by_split = torch.tensor([True, False, True, True, True, True])
+                else:
+                    raise ValueError(f"Unknown pdb name provided: {pdb_name}")
 
                 new_mask = torch.full((len(new_xyz), 27), True, device=xyz_prev.device)
                 for split_idx in range(len(splits_with_ends) - 1):
