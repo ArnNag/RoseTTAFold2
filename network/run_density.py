@@ -17,12 +17,11 @@ use_state_prev = True
 use_pair_prev = False
 use_msa = True
 a3m_name = "atpbind_atom"
-map_name = None
+map_name = "emd_14914"
 pdb_name = None
 dock_cycle = 0
-use_predocked = True
 
-assert (map_name is None) + (pdb_name is None) + use_predocked == 1, "Either a map or a pdb file must be specified."
+assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
 out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{replace_template=}_{replace_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
@@ -80,9 +79,6 @@ alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
 ###
 # pass 3, symmetry
 xyz_prev = xyz_t[0, :, :, :].to(pred.device)  # select the 0th template
-print("outside loop")
-print(f"{xyz_prev[0,0]=}")
-print(f"{xyz_t[0,0,0]=}")
 
 # index
 idx_pdb = torch.arange(L)[None, :]
@@ -270,9 +266,6 @@ with torch.no_grad():
                     fit_score_by_residue[start_idx:end_idx][remaining_idxs] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
                     mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
 
-            if use_predocked:
-
-
             if map_name is not None or use_predocked:
 
                 new_mask = ~torch.isnan(new_xyz).all(dim=-1)
@@ -346,7 +339,6 @@ with torch.no_grad():
                 elif pdb_name == "atpbind":
                     splits_with_ends = [0, 198, 306, 439, 545, 671, L]
                     new_mask_by_split = torch.tensor([True, False, True, True, True, True])
-                elif pdb_name == "new_"
                 else:
                     raise ValueError(f"Unknown pdb name provided: {pdb_name}")
 
