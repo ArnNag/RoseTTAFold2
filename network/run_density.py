@@ -14,21 +14,22 @@ from icecream import ic
 replace_template = True
 replace_xyz_prev = True
 use_state_prev = True
-use_pair_prev = True
+use_pair_prev = False
 use_msa = True
-a3m_name = "atpbind"
+a3m_name = "atpbind_atom"
 map_name = None
-pdb_name = "atpbind"
+pdb_name = None
 dock_cycle = 0
+use_predocked = True
 
-assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
+assert (map_name is None) + (pdb_name is None) + use_predocked == 1, "Either a map or a pdb file must be specified."
 
 out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{replace_template=}_{replace_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
 
 nseqs_full = 2048
-n_recycles = 4
+n_recycles = 3
 nseqs = 256
 topk = 1536
 pred.xyz_converter = pred.xyz_converter.cpu()
@@ -79,6 +80,9 @@ alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3 * 10)
 ###
 # pass 3, symmetry
 xyz_prev = xyz_t[0, :, :, :].to(pred.device)  # select the 0th template
+print("outside loop")
+print(f"{xyz_prev[0,0]=}")
+print(f"{xyz_t[0,0,0]=}")
 
 # index
 idx_pdb = torch.arange(L)[None, :]
@@ -106,6 +110,22 @@ with torch.no_grad():
     state_prev = None
     mask_recycle = mask_t_2d[0, :, :][None, :, :]  # replace template axis with batch axis
 
+    from featurizing import MSAFeaturize
+
+    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
+        msa,
+        ins,
+        p_mask=0.0,
+        params={"MAXLAT": nseqs, "MAXSEQ": nseqs_full, "MAXCYCLE": 1},
+    )
+
+    msa_seed = msa_seed.unsqueeze(0)
+    msa_extra = msa_extra.unsqueeze(0)
+
+    # fd memory savings
+    msa_seed = msa_seed.half()  # GPU ONLY
+    msa_extra = msa_extra.half()  # GPU ONLY
+
     if map_name is not None:
         from pyrosetta import init, rosetta
         from density import setup_docking_mover
@@ -120,24 +140,6 @@ with torch.no_grad():
         rosetta.core.scoring.electron_density.getDensityMap(mapfile)
 
     for i_cycle in range(n_recycles + 1):
-
-        from featurizing import MSAFeaturize
-
-        seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
-            msa,
-            ins,
-            p_mask=0.0,
-            params={"MAXLAT": nseqs, "MAXSEQ": nseqs_full, "MAXCYCLE": 1},
-        )
-
-        msa_seed = msa_seed.unsqueeze(0)
-        msa_extra = msa_extra.unsqueeze(0)
-
-        # fd memory savings
-        msa_seed = msa_seed.half()  # GPU ONLY
-        msa_extra = msa_extra.half()  # GPU ONLY
-
-        xyz_prev_prev = xyz_prev.clone()
 
         with torch.cuda.amp.autocast(True):
             (
@@ -225,7 +227,7 @@ with torch.no_grad():
                     print(f"{start_idx=}")
                     print(f"{end_idx=}")
 
-                    plddt_cutoff = 0.5
+                    plddt_cutoff = 0.4
                     remaining_idxs = torch.nonzero(pred_lddt[0, start_idx:end_idx] > plddt_cutoff).flatten()
 
                     min_residues_per_dock = 20
@@ -268,6 +270,11 @@ with torch.no_grad():
                     fit_score_by_residue[start_idx:end_idx][remaining_idxs] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
                     mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
 
+            if use_predocked:
+
+
+            if map_name is not None or use_predocked:
+
                 new_mask = ~torch.isnan(new_xyz).all(dim=-1)
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
 
@@ -278,8 +285,15 @@ with torch.no_grad():
                 # default to True for either end since we want to mask fragments on the ends if the only jump they touch
                 # is longer than long_jump_threshold
                 for split_idx, split_pt in enumerate(splits, start=1):
-                    assert split_pt >= 1
-                    jump_dist = torch.norm(new_xyz[split_pt, 1, :] - new_xyz[split_pt - 1, 1, :])
+                    print(f"{split_idx=}: {split_pt=}")
+                    print(f"{remaining_idxs=}")
+                    idx_into_remaining_idxs = torch.searchsorted(remaining_idxs, split_idx)
+                    print(f"{idx_into_remaining_idxs=}")
+                    if idx_into_remaining_idxs == 0:
+                        raise ValueError("The split_idx is before any remaining index.") # TODO: handle this case
+                    before_split_pt = remaining_idxs[idx_into_remaining_idxs - 1]
+                    after_split_pt = remaining_idxs[idx_into_remaining_idxs]
+                    jump_dist = torch.norm(new_xyz[after_split_pt, 1, :] - new_xyz[before_split_pt, 1, :])
                     print(f"{jump_dist=}")
                     is_long_jump[split_idx] = jump_dist > long_jump_threshold
 
@@ -332,6 +346,7 @@ with torch.no_grad():
                 elif pdb_name == "atpbind":
                     splits_with_ends = [0, 198, 306, 439, 545, 671, L]
                     new_mask_by_split = torch.tensor([True, False, True, True, True, True])
+                elif pdb_name == "new_"
                 else:
                     raise ValueError(f"Unknown pdb name provided: {pdb_name}")
 
