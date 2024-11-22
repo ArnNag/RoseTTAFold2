@@ -266,7 +266,7 @@ with torch.no_grad():
                     fit_score_by_residue[start_idx:end_idx][remaining_idxs] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
                     mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
 
-            if map_name is not None or use_predocked:
+            if map_name is not None:
 
                 new_mask = ~torch.isnan(new_xyz).all(dim=-1)
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
