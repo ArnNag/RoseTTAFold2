@@ -17,7 +17,7 @@ use_state_prev = True
 use_pair_prev = False
 use_msa = True
 a3m_name = "atpbind_atom"
-map_name = None
+map_name = "emd_14914"
 pdb_name = None
 dock_cycle = 0
 
@@ -214,11 +214,13 @@ with torch.no_grad():
                 splits_with_ends = [0]
                 splits_with_ends.extend(splits)
                 splits_with_ends.append(len(logits_pae[0]))
-                fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan)
+                fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan, device=new_xyz.device)
                 mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
+                plddt_cutoff = 0.4
                 remaining_idxs = torch.nonzero(pred_lddt[0, :] > plddt_cutoff).flatten()
                 frag_remaining_start = torch.full((len(splits_with_ends) - 1, ), torch.nan)
                 frag_remaining_end = torch.full((len(splits_with_ends) - 1, ), torch.nan)
+                print(f"{remaining_idxs=}")
                 for split_idx in range(len(splits_with_ends) - 1):
                     start_idx = splits_with_ends[split_idx]
                     end_idx = splits_with_ends[split_idx + 1]
@@ -226,13 +228,12 @@ with torch.no_grad():
                     print(f"{start_idx=}")
                     print(f"{end_idx=}")
 
-                    plddt_cutoff = 0.4
-
                     idx_into_remaining_idxs_start = torch.searchsorted(remaining_idxs, start_idx)
-                    idx_into_remaining_idxs_end = torch.searchsorted(remaining_idxs, start_idx)
+                    idx_into_remaining_idxs_end = torch.searchsorted(remaining_idxs, end_idx)
                     remaining_idxs_in_frag = remaining_idxs[idx_into_remaining_idxs_start:idx_into_remaining_idxs_end]
+                    print(f"{remaining_idxs_in_frag=}")
                     frag_remaining_start[split_idx] = remaining_idxs_in_frag[0]
-                    frag_remaining_end[split_idx] = remaining_idxs_in_frag[-1]
+                    frag_remaining_end[split_idx] = remaining_idxs_in_frag[-1] + 1  # end index is exclusive
 
                     min_residues_per_dock = 20
                     if len(remaining_idxs_in_frag) < min_residues_per_dock:
@@ -250,10 +251,10 @@ with torch.no_grad():
                     before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
                     util.writepdb(
                         before_dock_file,
-                        xyz_prev[start_idx:end_idx, :, :][remaining_idxs],
-                        seq[start_idx:end_idx][remaining_idxs],
-                        [len(remaining_idxs)],
-                        bfacts=100 * pred_lddt[0, start_idx:end_idx][remaining_idxs],
+                        xyz_prev[remaining_idxs_in_frag],
+                        seq[remaining_idxs_in_frag],
+                        [len(remaining_idxs_in_frag)],
+                        bfacts=100 * pred_lddt[0][remaining_idxs_in_frag],
                     )
 
                     pose_before_fit: Pose = pose_from_pdb(before_dock_file)
@@ -270,11 +271,14 @@ with torch.no_grad():
                         next_best_hit_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}_{out_suffix}.pdb"
                         shutil.copyfile(file, next_best_hit_file)
                     loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
-                    new_xyz[start_idx:end_idx, :, :][remaining_idxs] = torch.from_numpy(loaded_xyz).to(new_xyz)
-                    fit_score_by_residue[start_idx:end_idx][remaining_idxs] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
+                    new_xyz[remaining_idxs_in_frag] = torch.from_numpy(loaded_xyz).to(new_xyz)
+                    fit_score_by_residue[remaining_idxs_in_frag] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
                     mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
 
-                new_mask = ~torch.isnan(new_xyz).all(dim=-1)
+                print(f"{frag_remaining_start=}")
+                print(f"{frag_remaining_end=}")
+                fit_score_threshold = 1.0
+                new_mask = torch.logical_and(~torch.isnan(new_xyz).all(dim=-1), (fit_score_by_residue > fit_score_threshold)[:, None])
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
 
                 new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
@@ -283,18 +287,15 @@ with torch.no_grad():
                 is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
                 # default to True for either end since we want to mask fragments on the ends if the only jump they touch
                 # is longer than long_jump_threshold
-                for split_idx, split_pt in enumerate(splits, start=1):
+                for split_idx, split_pt in enumerate(splits):
                     print(f"{split_idx=}: {split_pt=}")
-                    print(f"{remaining_idxs=}")
-                    idx_into_remaining_idxs = torch.searchsorted(remaining_idxs, split_idx)
-                    print(f"{idx_into_remaining_idxs=}")
-                    if idx_into_remaining_idxs == 0:
-                        raise ValueError("The split_idx is before any remaining index.") # TODO: handle this case
-                    before_split_pt = remaining_idxs[idx_into_remaining_idxs - 1]
-                    after_split_pt = remaining_idxs[idx_into_remaining_idxs]
+                    before_split_pt = frag_remaining_end[split_idx]
+                    after_split_pt = frag_remaining_start[split_idx + 1]
                     jump_dist = torch.norm(new_xyz[after_split_pt, 1, :] - new_xyz[before_split_pt, 1, :])
                     print(f"{jump_dist=}")
-                    is_long_jump[split_idx] = jump_dist > long_jump_threshold
+                    is_long_jump[split_idx + 1] = jump_dist > long_jump_threshold
+
+                print(f"{is_long_jump=}")
 
                 for split_idx in range(len(splits_with_ends) - 1):
                     start_idx = splits_with_ends[split_idx]
