@@ -17,7 +17,7 @@ use_state_prev = True
 use_pair_prev = False
 use_msa = True
 a3m_name = "atpbind_atom"
-map_name = "emd_14914"
+map_name = None
 pdb_name = None
 dock_cycle = 0
 
@@ -216,6 +216,9 @@ with torch.no_grad():
                 splits_with_ends.append(len(logits_pae[0]))
                 fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan)
                 mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
+                remaining_idxs = torch.nonzero(pred_lddt[0, :] > plddt_cutoff).flatten()
+                frag_remaining_start = torch.full((len(splits_with_ends) - 1, ), torch.nan)
+                frag_remaining_end = torch.full((len(splits_with_ends) - 1, ), torch.nan)
                 for split_idx in range(len(splits_with_ends) - 1):
                     start_idx = splits_with_ends[split_idx]
                     end_idx = splits_with_ends[split_idx + 1]
@@ -224,10 +227,15 @@ with torch.no_grad():
                     print(f"{end_idx=}")
 
                     plddt_cutoff = 0.4
-                    remaining_idxs = torch.nonzero(pred_lddt[0, start_idx:end_idx] > plddt_cutoff).flatten()
+
+                    idx_into_remaining_idxs_start = torch.searchsorted(remaining_idxs, start_idx)
+                    idx_into_remaining_idxs_end = torch.searchsorted(remaining_idxs, start_idx)
+                    remaining_idxs_in_frag = remaining_idxs[idx_into_remaining_idxs_start:idx_into_remaining_idxs_end]
+                    frag_remaining_start[split_idx] = remaining_idxs_in_frag[0]
+                    frag_remaining_end[split_idx] = remaining_idxs_in_frag[-1]
 
                     min_residues_per_dock = 20
-                    if len(remaining_idxs) < min_residues_per_dock:
+                    if len(remaining_idxs_in_frag) < min_residues_per_dock:
                         continue
 
                     before_trim_file = f"before_trim_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
@@ -265,8 +273,6 @@ with torch.no_grad():
                     new_xyz[start_idx:end_idx, :, :][remaining_idxs] = torch.from_numpy(loaded_xyz).to(new_xyz)
                     fit_score_by_residue[start_idx:end_idx][remaining_idxs] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
                     mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
-
-            if map_name is not None:
 
                 new_mask = ~torch.isnan(new_xyz).all(dim=-1)
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
