@@ -10,6 +10,8 @@ import numpy as np
 from torch import nn
 import os
 from icecream import ic
+from datetime import datetime
+from pathlib import Path
 
 replace_template = True
 replace_xyz_prev = True
@@ -19,16 +21,20 @@ use_msa = True
 a3m_name = "atpbind_atom"
 map_name = "emd_14914"
 pdb_name = None
+n_recycles = 1
 dock_cycle = 0
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
-out_suffix = f"{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{replace_template=}_{replace_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
+now = datetime.now()
+dt_string = now.strftime("%d-%m-%Y_%H:%M:%S")
+out_dir = f"{dt_string}_{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{replace_template=}_{replace_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
+Path(out_dir).mkdir()
+
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
 
 nseqs_full = 2048
-n_recycles = 3
 nseqs = 256
 topk = 1536
 pred.xyz_converter = pred.xyz_converter.cpu()
@@ -193,13 +199,13 @@ with torch.no_grad():
 
         torch.cuda.empty_cache()
 
-        metrics_file = f"cycle_{i_cycle}_{out_suffix}"
+        metrics_file = f"{out_dir}/cycle_{i_cycle}"
         np.savez_compressed(
             metrics_file,
             lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
             pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
         )
-        util.writepdb(f"before_dock_cycle_{i_cycle}_full_{out_suffix}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
+        util.writepdb(f"{out_dir}/before_dock_cycle_{i_cycle}_full.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
         if i_cycle == dock_cycle:
 
@@ -209,7 +215,7 @@ with torch.no_grad():
                 import shutil
 
                 new_xyz = torch.full_like(xyz_prev, torch.nan)
-                splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=100)
+                splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=80)
                 print(f"{splits=}")
                 splits_with_ends = [0]
                 splits_with_ends.extend(splits)
@@ -218,8 +224,8 @@ with torch.no_grad():
                 mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
                 plddt_cutoff = 0.4
                 remaining_idxs = torch.nonzero(pred_lddt[0, :] > plddt_cutoff).flatten()
-                frag_remaining_start = torch.full((len(splits_with_ends) - 1, ), torch.nan)
-                frag_remaining_end = torch.full((len(splits_with_ends) - 1, ), torch.nan)
+                frag_remaining_start = torch.full((len(splits_with_ends) - 1, ), -1, dtype=torch.int16)
+                frag_remaining_end = torch.full((len(splits_with_ends) - 1, ), -1, dtype=torch.int16)
                 print(f"{remaining_idxs=}")
                 for split_idx in range(len(splits_with_ends) - 1):
                     start_idx = splits_with_ends[split_idx]
@@ -239,7 +245,7 @@ with torch.no_grad():
                     if len(remaining_idxs_in_frag) < min_residues_per_dock:
                         continue
 
-                    before_trim_file = f"before_trim_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
+                    before_trim_file = f"{out_dir}/before_trim_cycle_{i_cycle}_split_{split_idx}.pdb"
                     util.writepdb(
                         before_trim_file,
                         xyz_prev[start_idx:end_idx, :, :],
@@ -248,7 +254,7 @@ with torch.no_grad():
                         bfacts=100 * pred_lddt[0, start_idx:end_idx],
                     )
 
-                    before_dock_file = f"before_dock_cycle_{i_cycle}_split_{split_idx}_{out_suffix}.pdb"
+                    before_dock_file = f"{out_dir}/before_dock_cycle_{i_cycle}_split_{split_idx}.pdb"
                     util.writepdb(
                         before_dock_file,
                         xyz_prev[remaining_idxs_in_frag],
@@ -259,7 +265,7 @@ with torch.no_grad():
 
                     pose_before_fit: Pose = pose_from_pdb(before_dock_file)
                     dock_into_dens.apply(pose_before_fit)
-                    after_dock_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_best_{out_suffix}.pdb"
+                    after_dock_file = f"{out_dir}/after_dock_cycle_{i_cycle}_split_{split_idx}_best.pdb"
                     shutil.copyfile("EMPTY_JOB_use_jd2_000001.pdb", after_dock_file)
 
                     # grab top 'count' poses
@@ -268,7 +274,7 @@ with torch.no_grad():
                     allfiles.pop(0)
                     for j, file in enumerate(allfiles):
                         hit = j + 1
-                        next_best_hit_file = f"after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}_{out_suffix}.pdb"
+                        next_best_hit_file = f"{out_dir}/after_dock_cycle_{i_cycle}_split_{split_idx}_hit_{hit}.pdb"
                         shutil.copyfile(file, next_best_hit_file)
                     loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
                     new_xyz[remaining_idxs_in_frag] = torch.from_numpy(loaded_xyz).to(new_xyz)
@@ -283,7 +289,7 @@ with torch.no_grad():
 
                 new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
 
-                long_jump_threshold = 50.
+                long_jump_threshold = 45.
                 is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
                 # default to True for either end since we want to mask fragments on the ends if the only jump they touch
                 # is longer than long_jump_threshold
@@ -312,7 +318,7 @@ with torch.no_grad():
                     end_idx = splits_with_ends[split_idx + 1]
                     new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :], new_mask_by_split[split_idx])
 
-                new_pdb_path_before_realign = f"new_xyz_before_realign_cycle_{i_cycle}_{out_suffix}.pdb"
+                new_pdb_path_before_realign = f"{out_dir}/new_xyz_before_realign_cycle_{i_cycle}.pdb"
                 util.writepdb(
                     new_pdb_path_before_realign,
                     new_xyz,
@@ -322,7 +328,7 @@ with torch.no_grad():
                 )
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.5)
 
-                new_pdb_path = f"new_xyz_after_realign_cycle_{i_cycle}_{out_suffix}.pdb"
+                new_pdb_path = f"{out_dir}/new_xyz_after_realign_cycle_{i_cycle}.pdb"
                 util.writepdb(
                     new_pdb_path,
                     new_xyz,
@@ -357,7 +363,7 @@ with torch.no_grad():
 
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.5)
 
-                new_pdb_path = f"new_xyz_after_realign_cycle_{i_cycle}_{out_suffix}.pdb"
+                new_pdb_path = f"{out_dir}/new_xyz_after_realign_cycle_{i_cycle}.pdb"
                 util.writepdb(
                     new_pdb_path,
                     new_xyz,
