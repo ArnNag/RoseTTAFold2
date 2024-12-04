@@ -21,15 +21,24 @@ use_msa = True
 a3m_name = "atpbind_atom"
 map_name = "emd_14914"
 pdb_name = None
-n_recycles = 1
-dock_cycle = 0
+
+n_recycles = 6
+dock_cycle = 3
+plddt_cutoff = 0.4
+fit_score_threshold = 1.0
+long_jump_threshold = 45.
+clash_threshold = 0.5
+temp_conf = 0.8
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
 now = datetime.now()
 dt_string = now.strftime("%d-%m-%Y_%H:%M:%S")
-out_dir = f"{dt_string}_{a3m_name}_{f'map_{map_name}' if map_name is not None else f'pdb_{pdb_name}'}_pdb_{pdb_name}_{replace_template=}_{replace_xyz_prev=}_{use_state_prev=}_{use_pair_prev=}_{use_msa=}"
+out_dir = f"{dt_string}"
 Path(out_dir).mkdir()
+hyperparams = f"{replace_template=}\n{replace_xyz_prev=}\n{use_state_prev=}\n{use_pair_prev=}\n{use_msa=}\n{a3m_name=}\n{map_name=}\n{pdb_name=}\n{n_recycles=}\n{dock_cycle=}\n{plddt_cutoff=}\n{fit_score_threshold=}\n{long_jump_threshold=}\n{clash_threshold=}\n{temp_conf=}"
+with open(f"{out_dir}/hyperparams.txt", "w") as f:
+    f.write(hyperparams)
 
 model = os.path.dirname(__file__) + "/weights/RF2_jan24.pt"
 pred = Predictor(model, torch.device("cuda:0"))
@@ -222,7 +231,6 @@ with torch.no_grad():
                 splits_with_ends.append(len(logits_pae[0]))
                 fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan, device=new_xyz.device)
                 mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
-                plddt_cutoff = 0.4
                 remaining_idxs = torch.nonzero(pred_lddt[0, :] > plddt_cutoff).flatten()
                 frag_remaining_start = torch.full((len(splits_with_ends) - 1, ), -1, dtype=torch.int16)
                 frag_remaining_end = torch.full((len(splits_with_ends) - 1, ), -1, dtype=torch.int16)
@@ -283,13 +291,11 @@ with torch.no_grad():
 
                 print(f"{frag_remaining_start=}")
                 print(f"{frag_remaining_end=}")
-                fit_score_threshold = 1.0
                 new_mask = torch.logical_and(~torch.isnan(new_xyz).all(dim=-1), (fit_score_by_residue > fit_score_threshold)[:, None])
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
 
                 new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
 
-                long_jump_threshold = 45.
                 is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
                 # default to True for either end since we want to mask fragments on the ends if the only jump they touch
                 # is longer than long_jump_threshold
@@ -309,7 +315,7 @@ with torch.no_grad():
                     if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
                         new_mask_by_split[split_idx] = False
 
-                clash_mask_by_split = check_clash(new_xyz, splits_with_ends, mean_fit_score_by_split, clash_threshold=0.5)
+                clash_mask_by_split = check_clash(new_xyz, splits_with_ends, mean_fit_score_by_split, clash_threshold=clash_threshold)
 
                 new_mask_by_split = torch.logical_and(new_mask_by_split, clash_mask_by_split)
 
@@ -373,7 +379,7 @@ with torch.no_grad():
                 )
 
             if replace_template:
-                conf = torch.where(new_mask.all(dim=-1), 0.5, 0.0).to(seq.device)
+                conf = torch.where(new_mask.all(dim=-1), temp_conf, 0.0).to(seq.device)
                 seq_w_gaps = torch.where(new_mask.all(dim=-1), seq, 20)
                 seq_onehot = torch.nn.functional.one_hot(seq, num_classes=21).float()
                 t1d = torch.cat((seq_onehot, conf[:, None]), -1).unsqueeze(0)
