@@ -19,6 +19,7 @@ use_state_prev = True
 use_pair_prev = False
 use_msa = True
 a3m_name = "atpbind_atom"
+prediction_pdb = None
 map_name = "emd_14914"
 pdb_name = None
 
@@ -29,6 +30,7 @@ fit_score_threshold = 1.0
 long_jump_threshold = 45.
 clash_threshold = 0.5
 temp_conf = 0.8
+min_split_length = 80
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
@@ -36,7 +38,7 @@ now = datetime.now()
 dt_string = now.strftime("%d-%m-%Y_%H:%M:%S")
 out_dir = f"{dt_string}"
 Path(out_dir).mkdir()
-hyperparams = f"{replace_template=}\n{replace_xyz_prev=}\n{use_state_prev=}\n{use_pair_prev=}\n{use_msa=}\n{a3m_name=}\n{map_name=}\n{pdb_name=}\n{n_recycles=}\n{dock_cycle=}\n{plddt_cutoff=}\n{fit_score_threshold=}\n{long_jump_threshold=}\n{clash_threshold=}\n{temp_conf=}"
+hyperparams = f"{replace_template=}\n{replace_xyz_prev=}\n{use_state_prev=}\n{use_pair_prev=}\n{use_msa=}\n{a3m_name=}\n{map_name=}\n{pdb_name=}\n{prediction_pdb=}\n{n_recycles=}\n{dock_cycle=}\n{plddt_cutoff=}\n{fit_score_threshold=}\n{long_jump_threshold=}\n{clash_threshold=}\n{temp_conf=}\n{min_split_length=}"
 with open(f"{out_dir}/hyperparams.txt", "w") as f:
     f.write(hyperparams)
 
@@ -62,11 +64,10 @@ L = sum(Ls)
 
 # dummy template
 xyz_t = (
-    INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
-    + torch.rand(n_templ, L, 1, 3) * 5.0
-    - 2.5 + L ** (1 / 2)
+        INIT_CRDS.reshape(1, 1, 27, 3).repeat(n_templ, L, 1, 1)
+        + torch.rand(n_templ, L, 1, 3) * 5.0
+        - 2.5 + L ** (1 / 2)
 ).float()
-
 
 mask_t = torch.full((n_templ, L, 27), False)
 mask_t_2d = mask_t[:, :, :3].all(dim=-1)  # (T, L)
@@ -152,69 +153,105 @@ with torch.no_grad():
 
     for i_cycle in range(n_recycles + 1):
 
-        with torch.cuda.amp.autocast(True):
-            (
-                _,
-                _,
-                _,
-                logits_pae,
-                _,
-                xyz_prev,
-                alpha,
-                _,
-                pred_lddt,
-                msa_prev,
-                pair_prev,
-                state_prev,
-            ) = pred.model(
-                msa_seed,
-                msa_extra,
-                seq.unsqueeze(0),
-                xyz_prev.unsqueeze(0),
-                idx_pdb,
-                t1d=t1d.unsqueeze(0),
-                t2d=t2d,
-                xyz_t=xyz_t.unsqueeze(0),
-                alpha_t=alpha_t,
-                mask_t=mask_t_2d.unsqueeze(0),
-                same_chain=None,
-                msa_prev=msa_prev,
-                pair_prev=pair_prev,
-                state_prev=state_prev,
-                p2p_crop=-1,
-                topk_crop=topk,
-                mask_recycle=mask_recycle,
-                symmids=None,
-                symmsub=None,
-                symmRs=None,
-                symmmeta=None,
-                striping=None,
+        if prediction_pdb is None or i_cycle > dock_cycle:
+            with torch.cuda.amp.autocast(True):
+                (
+                    _,
+                    _,
+                    _,
+                    logits_pae,
+                    _,
+                    xyz_prev,
+                    alpha,
+                    _,
+                    pred_lddt,
+                    msa_prev,
+                    pair_prev,
+                    state_prev,
+                ) = pred.model(
+                    msa_seed,
+                    msa_extra,
+                    seq.unsqueeze(0),
+                    xyz_prev.unsqueeze(0),
+                    idx_pdb,
+                    t1d=t1d.unsqueeze(0),
+                    t2d=t2d,
+                    xyz_t=xyz_t.unsqueeze(0),
+                    alpha_t=alpha_t,
+                    mask_t=mask_t_2d.unsqueeze(0),
+                    same_chain=None,
+                    msa_prev=msa_prev,
+                    pair_prev=pair_prev,
+                    state_prev=state_prev,
+                    p2p_crop=-1,
+                    topk_crop=topk,
+                    mask_recycle=mask_recycle,
+                    symmids=None,
+                    symmsub=None,
+                    symmRs=None,
+                    symmmeta=None,
+                    striping=None,
+                )
+                alpha = alpha[-1, 0, :, :, :].to(seq.device)
+                xyz_prev = xyz_prev[-1, 0, :, :, :].to(seq.device)
+                _, xyz_prev = pred.xyz_converter.compute_all_atom(seq[None, :], xyz_prev[None, :, :, :],
+                                                                  alpha[None, :, :, :])
+                xyz_prev = xyz_prev[0, :, :, :]
+
+            pair_prev = pair_prev.cpu()
+            msa_prev = msa_prev.cpu()
+
+            pred_lddt = nn.Softmax(dim=1)(pred_lddt.half()) * pred.lddt_bins[None, :, None]
+            pred_lddt = pred_lddt.sum(dim=1)
+            logits_pae = pae_unbin(logits_pae.half())
+
+            print(
+                f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f}"
             )
-            alpha = alpha[-1, 0, :, :, :].to(seq.device)
-            xyz_prev = xyz_prev[-1, 0, :, :, :].to(seq.device)
-            _, xyz_prev = pred.xyz_converter.compute_all_atom(seq[None, :], xyz_prev[None, :, :, :], alpha[None, :, :, :])
-            xyz_prev = xyz_prev[0, :, :, :]
 
-        pair_prev = pair_prev.cpu()
-        msa_prev = msa_prev.cpu()
+            torch.cuda.empty_cache()
 
-        pred_lddt = nn.Softmax(dim=1)(pred_lddt.half()) * pred.lddt_bins[None, :, None]
-        pred_lddt = pred_lddt.sum(dim=1)
-        logits_pae = pae_unbin(logits_pae.half())
+            metrics_file = f"{out_dir}/cycle_{i_cycle}"
 
-        print(
-            f"recycle {i_cycle} plddt {pred_lddt.mean():.3f} pae {logits_pae.mean():.3f}"
-        )
+            if i_cycle == dock_cycle:
+                np.savez_compressed(
+                    metrics_file,
+                    lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
+                    pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
+                    msa_seed=msa_seed.detach().cpu().numpy(),
+                    msa_extra=msa_extra.detach().cpu().numpy(),
+                    msa_prev=msa_prev.detach().cpu().numpy(),
+                    pair_prev=pair_prev.detach().cpu().numpy(),
+                    state_prev=state_prev.detach().cpu().numpy(),
+                )
+            else:
+                np.savez_compressed(
+                    metrics_file,
+                    lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
+                    pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
+                )
+            util.writepdb(f"{out_dir}/full_prediction_{i_cycle}.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
 
-        torch.cuda.empty_cache()
+        else:
+            xyz_prev_path = f"pdb/{prediction_pdb}.pdb"
+            xyz_prev = torch.from_numpy(
+                parse_pdb_w_seq(xyz_prev_path)[
+                    0
+                ]
+            ).to(xyz_prev)
 
-        metrics_file = f"{out_dir}/cycle_{i_cycle}"
-        np.savez_compressed(
-            metrics_file,
-            lddt=pred_lddt[0].detach().cpu().numpy().astype(np.float16),
-            pae=logits_pae[0].detach().cpu().numpy().astype(np.float16),
-        )
-        util.writepdb(f"{out_dir}/before_dock_cycle_{i_cycle}_full.pdb", xyz_prev, seq, Ls, bfacts=100 * pred_lddt[0])
+            metrics_file = f"pdb/{prediction_pdb}.npz"
+            metrics = np.load(metrics_file)
+            pred_lddt = metrics["lddt"].unsqueeze(0)
+            logits_pae = metrics["pae"].unsqueeze(0)
+            if use_msa:
+                msa_seed = metrics["msa_seed"]
+                msa_extra = metrics["msa_extra"]
+                msa_prev = metrics["msa_prev"]
+            if use_pair_prev:
+                pair_prev = metrics["pair_prev"]
+            if use_state_prev:
+                state_prev = metrics["state_prev"]
 
         if i_cycle == dock_cycle:
 
@@ -224,16 +261,16 @@ with torch.no_grad():
                 import shutil
 
                 new_xyz = torch.full_like(xyz_prev, torch.nan)
-                splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=80)
+                splits: list[int] = split_by_pae(logits_pae[0].to(torch.float32), min_split_length=min_split_length)
                 print(f"{splits=}")
                 splits_with_ends = [0]
                 splits_with_ends.extend(splits)
                 splits_with_ends.append(len(logits_pae[0]))
-                fit_score_by_residue = torch.full((len(xyz_prev), ), torch.nan, device=new_xyz.device)
+                fit_score_by_residue = torch.full((len(xyz_prev),), torch.nan, device=new_xyz.device)
                 mean_fit_score_by_split = torch.full((len(splits_with_ends) - 1,), torch.nan)
                 remaining_idxs = torch.nonzero(pred_lddt[0, :] > plddt_cutoff).flatten()
-                frag_remaining_start = torch.full((len(splits_with_ends) - 1, ), -1, dtype=torch.int16)
-                frag_remaining_end = torch.full((len(splits_with_ends) - 1, ), -1, dtype=torch.int16)
+                frag_remaining_start = torch.full((len(splits_with_ends) - 1,), -1, dtype=torch.int16)
+                frag_remaining_end = torch.full((len(splits_with_ends) - 1,), -1, dtype=torch.int16)
                 print(f"{remaining_idxs=}")
                 for split_idx in range(len(splits_with_ends) - 1):
                     start_idx = splits_with_ends[split_idx]
@@ -286,15 +323,17 @@ with torch.no_grad():
                         shutil.copyfile(file, next_best_hit_file)
                     loaded_xyz, _, _, loaded_fit_score = parse_pdb_w_b_factor(after_dock_file)
                     new_xyz[remaining_idxs_in_frag] = torch.from_numpy(loaded_xyz).to(new_xyz)
-                    fit_score_by_residue[remaining_idxs_in_frag] = torch.from_numpy(loaded_fit_score).to(fit_score_by_residue)
+                    fit_score_by_residue[remaining_idxs_in_frag] = torch.from_numpy(loaded_fit_score).to(
+                        fit_score_by_residue)
                     mean_fit_score_by_split[split_idx] = loaded_fit_score.mean()
 
                 print(f"{frag_remaining_start=}")
                 print(f"{frag_remaining_end=}")
-                new_mask = torch.logical_and(~torch.isnan(new_xyz).all(dim=-1), (fit_score_by_residue > fit_score_threshold)[:, None])
+                new_mask = torch.logical_and(~torch.isnan(new_xyz).all(dim=-1),
+                                             (fit_score_by_residue > fit_score_threshold)[:, None])
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.)
 
-                new_mask_by_split = torch.full((len(splits_with_ends) - 1, ), True)
+                new_mask_by_split = torch.full((len(splits_with_ends) - 1,), True)
 
                 is_long_jump = torch.full((len(splits) + 2,), True, dtype=torch.bool)
                 # default to True for either end since we want to mask fragments on the ends if the only jump they touch
@@ -315,14 +354,16 @@ with torch.no_grad():
                     if is_long_jump[split_idx] and is_long_jump[split_idx + 1]:
                         new_mask_by_split[split_idx] = False
 
-                clash_mask_by_split = check_clash(new_xyz, splits_with_ends, mean_fit_score_by_split, clash_threshold=clash_threshold)
+                clash_mask_by_split = check_clash(new_xyz, splits_with_ends, mean_fit_score_by_split,
+                                                  clash_threshold=clash_threshold)
 
                 new_mask_by_split = torch.logical_and(new_mask_by_split, clash_mask_by_split)
 
                 for split_idx in range(len(splits_with_ends) - 1):
                     start_idx = splits_with_ends[split_idx]
                     end_idx = splits_with_ends[split_idx + 1]
-                    new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :], new_mask_by_split[split_idx])
+                    new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :],
+                                                                       new_mask_by_split[split_idx])
 
                 new_pdb_path_before_realign = f"{out_dir}/new_xyz_before_realign_cycle_{i_cycle}.pdb"
                 util.writepdb(
@@ -358,6 +399,9 @@ with torch.no_grad():
                 elif pdb_name == "atpbind":
                     splits_with_ends = [0, 198, 306, 439, 545, 671, L]
                     new_mask_by_split = torch.tensor([True, False, True, True, True, True])
+                elif pdb_name == "atpbind_modelangelo":
+                    splits_with_ends = [0, L]
+                    new_mask_by_split = torch.tensor([True])
                 else:
                     raise ValueError(f"Unknown pdb name provided: {pdb_name}")
 
@@ -365,7 +409,8 @@ with torch.no_grad():
                 for split_idx in range(len(splits_with_ends) - 1):
                     start_idx = splits_with_ends[split_idx]
                     end_idx = splits_with_ends[split_idx + 1]
-                    new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :], new_mask_by_split[split_idx])
+                    new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :],
+                                                                       new_mask_by_split[split_idx])
 
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.5)
 
@@ -414,4 +459,3 @@ with torch.no_grad():
                 msa_extra = torch.zeros_like(msa_extra)
                 msa_prev = torch.zeros_like(msa_prev)
                 seq = torch.zeros_like(seq)
-
