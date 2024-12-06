@@ -104,11 +104,12 @@ def split_by_pae(
         # | D | E | F |
         # | G | H | I |
 
-        A = pae_cumsum[test_slice.start, test_slice.start]
+        pae_cumsum_diag = pae_cumsum.diag()
+        A = pae_cumsum_diag[test_slice.start]
         B = pae_cumsum[test_slice.start, test_slice.stop]
         C = pae_cumsum[test_slice.start, -1]
         D = pae_cumsum[test_slice.stop, test_slice.start]
-        E = pae_cumsum[test_slice.stop, test_slice.stop]
+        E = pae_cumsum_diag[test_slice.stop]
         F = pae_cumsum[test_slice.stop, -1]
         G = pae_cumsum[-1, test_slice.start]
         H = pae_cumsum[-1, test_slice.stop]
