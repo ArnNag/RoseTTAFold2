@@ -13,24 +13,25 @@ from icecream import ic
 from datetime import datetime
 from pathlib import Path
 
+a3m_name = "atpbind"
+map_name = "emd_14915"
+pdb_name = None
 replace_template = True
 replace_xyz_prev = True
 use_state_prev = True
 use_pair_prev = False
 use_msa = True
-a3m_name = "atpbind_atom"
+use_msa_prev = True
 prediction_pdb = None
-map_name = "emd_14914"
-pdb_name = None
 
-n_recycles = 6
+n_recycles = 4
 dock_cycle = 3
 plddt_cutoff = 0.4
 fit_score_threshold = 1.0
 long_jump_threshold = 45.
 clash_threshold = 0.5
 temp_conf = 0.8
-min_split_length = 80
+min_split_length = 120
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
@@ -38,7 +39,7 @@ now = datetime.now()
 dt_string = now.strftime("%d-%m-%Y_%H:%M:%S")
 out_dir = f"{dt_string}"
 Path(out_dir).mkdir()
-hyperparams = f"{replace_template=}\n{replace_xyz_prev=}\n{use_state_prev=}\n{use_pair_prev=}\n{use_msa=}\n{a3m_name=}\n{map_name=}\n{pdb_name=}\n{prediction_pdb=}\n{n_recycles=}\n{dock_cycle=}\n{plddt_cutoff=}\n{fit_score_threshold=}\n{long_jump_threshold=}\n{clash_threshold=}\n{temp_conf=}\n{min_split_length=}"
+hyperparams = f"{replace_template=}\n{replace_xyz_prev=}\n{use_state_prev=}\n{use_pair_prev=}\n{use_msa=}\n{use_msa_prev=}\n{a3m_name=}\n{map_name=}\n{pdb_name=}\n{prediction_pdb=}\n{n_recycles=}\n{dock_cycle=}\n{plddt_cutoff=}\n{fit_score_threshold=}\n{long_jump_threshold=}\n{clash_threshold=}\n{temp_conf=}\n{min_split_length=}"
 with open(f"{out_dir}/hyperparams.txt", "w") as f:
     f.write(hyperparams)
 
@@ -457,5 +458,7 @@ with torch.no_grad():
             if not use_msa:
                 msa_seed = torch.zeros_like(msa_seed)
                 msa_extra = torch.zeros_like(msa_extra)
-                msa_prev = torch.zeros_like(msa_prev)
                 seq = torch.zeros_like(seq)
+            if not use_msa_prev:
+                msa_prev = torch.zeros_like(msa_prev)
+
