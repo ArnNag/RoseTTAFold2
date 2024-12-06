@@ -97,7 +97,7 @@ def split_by_pae(
     from torch.nn import functional
     pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
 
-    def inter_vs_intra_pae_score(test_slice: slice) -> float:
+    def inter_vs_intra_pae_enrichment(test_slice: slice) -> float:
 
         # The letters below represent the cumulative sum of the region as well as the regions to the top and left.
         # | A | B | C |
@@ -121,6 +121,13 @@ def split_by_pae(
                     (sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - test_slice_len))
         return pae_region_scale_factor
 
+    def compute_all_regions():
+        for start_idx in range(chain_length):
+            for end_idx in range(start_idx, chain_length):
+                test_slice = slice(start_idx, end_idx)
+                test_slice_length = end_idx - start_idx
+                pae_enrichment[start_idx,end_idx] = inter_vs_intra_pae_enrichment(test_slice)
+
     def split_by_pae_for_region(
             search_start_idx: int,
             search_end_idx: int,
@@ -137,10 +144,12 @@ def split_by_pae(
         best_slice = slice(search_start_idx, search_end_idx)
         best_slice_length = -1
         for start_idx in range(search_start_idx, search_end_idx - min_split_length + 1):
-            for end_idx in range(start_idx + min_split_length, search_end_idx + 1):
+            for end_idx in range(start_idx + min_split_length, search_end_idx):
+                print(f"{start_idx=}")
+                print(f"{end_idx=}")
                 test_slice = slice(start_idx, end_idx)
                 test_slice_length = end_idx - start_idx
-                pae_region_scale_factor: float = inter_vs_intra_pae_score(test_slice)
+                pae_region_scale_factor: float = pae_enrichment[start_idx,end_idx]
                 if pae_region_scale_factor > best_pae_region_scale_factor or (
                         pae_region_scale_factor == best_pae_region_scale_factor
                         and test_slice_length > best_slice_length
@@ -163,9 +172,29 @@ def split_by_pae(
         best_slice_before.extend(best_slice_after)
         return best_slice_before
 
+    pae_enrichment = torch.full((chain_length, chain_length), torch.nan)
+    compute_all_regions()
+
     return split_by_pae_for_region(
         search_start_idx=0, search_end_idx=chain_length
     )
+
+
+def test_split_by_pae():
+
+    block_sizes = [7, 3, 4, 5]
+    total_size = sum(block_sizes)
+    block_matrix = torch.ones((total_size, total_size))
+    current_index = 0
+    for size in block_sizes:
+        block_matrix[
+            current_index : current_index + size, current_index : current_index + size
+        ] = torch.zeros((size, size))
+        current_index += size
+
+
+
+    print(split_by_pae(block_matrix, min_split_length=5))
 
 
 def check_clash(xyz: torch.Tensor, splits_with_ends: list[int], fit_scores_by_split: torch.Tensor, clash_threshold: float) -> torch.Tensor:
