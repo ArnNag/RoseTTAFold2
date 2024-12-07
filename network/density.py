@@ -8,6 +8,7 @@ import glob
 
 from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init, Pose
 
+from network.scoring import HbPolyType
 from parsers import parse_pdb_w_seq
 
 # init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
@@ -97,47 +98,22 @@ def split_by_pae(
     from torch.nn import functional
     pae_cumsum = functional.pad(input=pae_cumsum, pad=(1, 0, 1, 0), mode='constant', value=0.)
 
-    def inter_vs_intra_pae_enrichment(test_slice: slice) -> float:
+    # The letters below represent the cumulative sum of the region as well as the regions to the top and left.
+    # | A | B | C |
+    # | D | E | F |
+    # | G | H | I |
 
-        # The letters below represent the cumulative sum of the region as well as the regions to the top and left.
-        # | A | B | C |
-        # | D | E | F |
-        # | G | H | I |
+    all_idxs = torch.arange(chain_length + 1)
+    all_slice_lens = all_idxs[None, :] - all_idxs[:, None]
+    A = pae_cumsum.diag().expand(chain_length + 1, chain_length + 1)
+    F = pae_cumsum[-1,:].expand(chain_length + 1, chain_length + 1)
+    H = pae_cumsum[:,-1].expand(chain_length + 1, chain_length + 1)
 
-        pae_cumsum_diag = pae_cumsum.diag()
-        pae_cumsum_last_row = pae_cumsum[-1, :]
-        pae_cumsum_last_col = pae_cumsum[:, -1]
+    sum_inter_split_pae = A + A.T - pae_cumsum - pae_cumsum.T
+    sum_intra_split_pae = F + H - F.T - H.T - 2 * sum_inter_split_pae
 
-        A_full = pae_cumsum.diag().expand(chain_length + 1, chain_length + 1)
-        C_full = pae_cumsum_last_col.expand(chain_length + 1, chain_length + 1)
-        assert pae_cumsum_last_col[test_slice.start] == C_full.T[test_slice.start, test_slice.stop]
-        assert pae_cumsum_last_col[test_slice.stop] == C_full[test_slice.start, test_slice.stop]
-        F_full = pae_cumsum_last_row.expand(chain_length + 1, chain_length + 1)
-        assert pae_cumsum_last_row[test_slice.start] == F_full.T[test_slice.start, test_slice.stop]
-        assert pae_cumsum_last_row[test_slice.stop] == F_full[test_slice.start, test_slice.stop]
-        A = A_full[test_slice.start, test_slice.stop]
-        B = pae_cumsum[test_slice.start, test_slice.stop]
-        C = C_full[test_slice.start, test_slice.stop]
-        D = pae_cumsum.T[test_slice.start, test_slice.stop]
-        E = A_full.T[test_slice.start, test_slice.stop]
-        F = F_full[test_slice.start, test_slice.stop]
-        G = F_full.T[test_slice.start, test_slice.stop]
-        H = pae_cumsum_last_row[test_slice.stop]
-
-        test_slice_len = test_slice.stop - test_slice.start
-        sum_inter_split_pae = A + E - B - D
-        sum_intra_split_pae = F + H - C - G - 2 * sum_inter_split_pae
-
-        pae_region_scale_factor = (sum_intra_split_pae * test_slice_len) / (
-                    (sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - test_slice_len))
-        return pae_region_scale_factor
-
-    def compute_all_regions():
-        for start_idx in range(chain_length):
-            for end_idx in range(start_idx, chain_length):
-                test_slice = slice(start_idx, end_idx)
-                test_slice_length = end_idx - start_idx
-                pae_enrichment[start_idx,end_idx] = inter_vs_intra_pae_enrichment(test_slice)
+    pae_enrichment = (sum_intra_split_pae * all_slice_lens) / (
+                (sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - all_slice_lens))
 
     def split_by_pae_for_region(
             search_start_idx: int,
@@ -183,17 +159,14 @@ def split_by_pae(
         best_slice_before.extend(best_slice_after)
         return best_slice_before
 
-    pae_enrichment = torch.full((chain_length + 1, chain_length + 1), torch.nan)
-    compute_all_regions()
-
     return split_by_pae_for_region(
         search_start_idx=0, search_end_idx=chain_length
-    )
+    )[:-1]
 
 
 def test_split_by_pae():
 
-    block_sizes = [7, 2, 4, 5]
+    block_sizes = [7, 2, 7, 10]
     total_size = sum(block_sizes)
     block_matrix = torch.ones((total_size, total_size))
     current_index = 0
@@ -205,7 +178,7 @@ def test_split_by_pae():
 
 
 
-    print(split_by_pae(block_matrix, min_split_length=5))
+    print(split_by_pae(block_matrix, min_split_length=1))
 
 
 def check_clash(xyz: torch.Tensor, splits_with_ends: list[int], fit_scores_by_split: torch.Tensor, clash_threshold: float) -> torch.Tensor:
