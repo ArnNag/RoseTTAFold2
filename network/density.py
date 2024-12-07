@@ -83,16 +83,8 @@ def multidock_model(allfiles: list[str], mapfile: str) -> rosetta.core.pose.Pose
     return all_poses
 
 
-def split_by_pae(
-        pae_array: torch.Tensor,
-        min_split_length: int,
-) -> list[int]:
-
+def compute_pae_enrichment(pae_array: torch.Tensor):
     chain_length = pae_array.shape[0]
-    assert pae_array.shape[1] == chain_length
-    assert chain_length >= min_split_length
-    assert min_split_length > 0
-    
     pae_cumsum_rows = torch.cumsum(pae_array, dim=0)
     pae_cumsum = torch.cumsum(pae_cumsum_rows, dim=1)
     from torch.nn import functional
@@ -112,8 +104,21 @@ def split_by_pae(
     sum_inter_split_pae = A + A.T - pae_cumsum - pae_cumsum.T
     sum_intra_split_pae = F + H - F.T - H.T - 2 * sum_inter_split_pae
 
-    pae_enrichment = (sum_intra_split_pae * all_slice_lens) / (
-                (sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - all_slice_lens))
+    return (sum_intra_split_pae * all_slice_lens) / (
+            (sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - all_slice_lens))
+
+
+def split_by_pae(
+        pae_array: torch.Tensor,
+        min_split_length: int,
+) -> list[int]:
+
+    chain_length = pae_array.shape[0]
+    assert pae_array.shape[1] == chain_length
+    assert chain_length >= min_split_length
+    assert min_split_length > 0
+
+    pae_enrichment = compute_pae_enrichment(pae_array)
 
     def split_by_pae_for_region(
             search_start_idx: int,
@@ -132,8 +137,6 @@ def split_by_pae(
         best_slice_length = -1
         for start_idx in range(search_start_idx, search_end_idx - min_split_length + 1):
             for end_idx in range(start_idx + min_split_length, search_end_idx + 1):
-                print(f"{start_idx=}")
-                print(f"{end_idx=}")
                 test_slice = slice(start_idx, end_idx)
                 test_slice_length = end_idx - start_idx
                 pae_region_scale_factor: float = pae_enrichment[start_idx,end_idx]
