@@ -110,13 +110,15 @@ def split_by_pae(
 
         A_full = pae_cumsum.diag().expand(chain_length + 1, chain_length + 1)
         E_full = A_full.T
+        C_full = pae_cumsum_last_col.expand(chain_length + 1, chain_length + 1)
+        F_full = pae_cumsum_last_row.expand(chain_length + 1, chain_length + 1)
         A = A_full[test_slice.start, test_slice.stop]
         B = pae_cumsum[test_slice.start, test_slice.stop]
-        C = pae_cumsum_last_col[test_slice.start]
+        C = C_full[test_slice.start, test_slice.stop]
         D = pae_cumsum.T[test_slice.start, test_slice.stop]
         E = E_full[test_slice.start, test_slice.stop]
-        F = pae_cumsum_last_col[test_slice.stop]
-        G = pae_cumsum_last_row[test_slice.start]
+        F = F_full[test_slice.start, test_slice.stop]
+        G = F_full.T[test_slice.start, test_slice.stop]
         H = pae_cumsum_last_row[test_slice.stop]
 
         test_slice_len = test_slice.stop - test_slice.start
