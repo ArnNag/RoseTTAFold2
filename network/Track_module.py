@@ -310,7 +310,7 @@ class MSA2Pair(nn.Module):
         nn.init.zeros_(self.proj_out.weight)
         nn.init.zeros_(self.proj_out.bias)
 
-    def forward(self, msa, pair, strides):
+    def forward(self, msa, pair, strides, freeze_mask):
         B, N, L = msa.shape[:3]
 
         STRIDE = L
@@ -338,8 +338,10 @@ class MSA2Pair(nn.Module):
             right = right / float(N)
             out = einsum('bsli,bsmj->blmij', left, right).reshape(B, L, L, -1)
             out = self.proj_out(out)
-            pair = pair + out
-
+            if self.freeze_mask is None:
+                pair = pair + out
+            else:
+                pair = pair + einsum("bijh,bij->bijh", out, freeze_mask)
         return pair
 
 class SCPred(nn.Module):
@@ -615,7 +617,8 @@ class IterBlock(nn.Module):
                  n_head_msa=8, n_head_pair=4,
                  use_global_attn=False,
                  d_hidden=32, d_hidden_msa=None, p_drop=0.15,
-                 SE3_param={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32}):
+                 SE3_param={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
+                 ):
         super(IterBlock, self).__init__()
         if d_hidden_msa == None:
             d_hidden_msa = d_hidden
@@ -641,7 +644,8 @@ class IterBlock(nn.Module):
         self, msa, pair, R_in, T_in, xyz, state, idx, 
         strides, symmids, symmsub_in, symmsub, symmRs, symmmeta, 
         use_checkpoint=False, topk=0, crop=-1,
-        low_vram=False
+        low_vram=False,
+        msa2pair_freeze_mask=None,
     ):
         B,L = pair.shape[:2]
 
@@ -672,7 +676,7 @@ class IterBlock(nn.Module):
             )
         else:
             msa = self.msa2msa(msa, pair, rbf_feat, state, strides)
-            pair = self.msa2pair(msa, pair, strides)
+            pair = self.msa2pair(msa, pair, strides, msa2pair_freeze_mask)
 
             if (low_vram and not self.training):
                 msa = msa.cpu() # temporarily move msa to CPU to free more memory for p2p
@@ -698,7 +702,8 @@ class IterativeSimulator(nn.Module):
                  n_head_msa=8, n_head_pair=4,
                  SE3_param_full={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  SE3_param_topk={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
-                 p_drop=0.15):
+                 p_drop=0.15,
+                 ):
         super(IterativeSimulator, self).__init__()
         self.n_extra_block = n_extra_block
         self.n_main_block = n_main_block
@@ -714,7 +719,8 @@ class IterativeSimulator(nn.Module):
                                                         d_hidden=d_hidden,
                                                         p_drop=p_drop,
                                                         use_global_attn=True,
-                                                        SE3_param=SE3_param_full)
+                                                        SE3_param=SE3_param_full,
+                                                        )
                                                         for i in range(n_extra_block)])
 
         # Update with seed sequences
@@ -725,7 +731,8 @@ class IterativeSimulator(nn.Module):
                                                        d_hidden=d_hidden,
                                                        p_drop=p_drop,
                                                        use_global_attn=False,
-                                                       SE3_param=SE3_param_full)
+                                                       SE3_param=SE3_param_full,
+                                                       )
                                                        for i in range(n_main_block)])
 
         self.proj_state2 = nn.Linear(SE3_param_full['l0_out_features'], SE3_param_topk['l0_out_features'])
@@ -748,7 +755,8 @@ class IterativeSimulator(nn.Module):
         self, seq, msa, msa_full, pair, xyz_in, state, idx, 
         strides, symmids, symmsub, symmRs, symmmeta, 
         use_checkpoint=False, p2p_crop=-1, topk_crop=-1,
-        low_vram=False
+        low_vram=False,
+        msa2pair_freeze_mask=None,
     ):
         # input:
         #   seq: query sequence (B, L)
@@ -787,7 +795,9 @@ class IterativeSimulator(nn.Module):
                 msa_full, pair, R_in, T_in, xyz, state, idx, 
                 strides, symmids, symmsub_in, symmsub, symmRs, symmmeta,
                 use_checkpoint=use_checkpoint, crop=p2p_crop, topk=topk_crop,
-                low_vram=low_vram)
+                low_vram=low_vram,
+                msa2pair_freeze_mask=msa2pair_freeze_mask,
+            )
 
             R_s.append(R_in)
             T_s.append(T_in)
@@ -804,7 +814,9 @@ class IterativeSimulator(nn.Module):
                 msa, pair, R_in, T_in, xyz, state, idx, 
                 strides, symmids, symmsub_in, symmsub, symmRs, symmmeta,
                 use_checkpoint=use_checkpoint, crop=p2p_crop, topk=topk_crop,
-                low_vram=low_vram)
+                low_vram=low_vram,
+                msa2pair_freeze_mask=msa2pair_freeze_mask,
+            )
 
             R_s.append(R_in)
             T_s.append(T_in)

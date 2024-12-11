@@ -14,8 +14,8 @@ from datetime import datetime
 from pathlib import Path
 
 a3m_name = "atpbind"
-map_name = "emd_14915"
-pdb_name = None
+map_name = None
+pdb_name = "atpbind"
 replace_template = True
 replace_xyz_prev = True
 use_state_prev = True
@@ -23,6 +23,7 @@ use_pair_prev = False
 use_msa = True
 use_msa_prev = True
 prediction_pdb = None
+freeze_masked_msa2pair = True
 
 n_recycles = 4
 dock_cycle = 3
@@ -31,7 +32,7 @@ fit_score_threshold = 1.0
 long_jump_threshold = 45.
 clash_threshold = 0.5
 temp_conf = 0.8
-min_split_length = 120
+min_split_length = 80
 
 assert (map_name is None) + (pdb_name is None) == 1, "Either a map or a pdb file must be specified."
 
@@ -39,7 +40,7 @@ now = datetime.now()
 dt_string = now.strftime("%d-%m-%Y_%H:%M:%S")
 out_dir = f"{dt_string}"
 Path(out_dir).mkdir()
-hyperparams = f"{replace_template=}\n{replace_xyz_prev=}\n{use_state_prev=}\n{use_pair_prev=}\n{use_msa=}\n{use_msa_prev=}\n{a3m_name=}\n{map_name=}\n{pdb_name=}\n{prediction_pdb=}\n{n_recycles=}\n{dock_cycle=}\n{plddt_cutoff=}\n{fit_score_threshold=}\n{long_jump_threshold=}\n{clash_threshold=}\n{temp_conf=}\n{min_split_length=}"
+hyperparams = f"{replace_template=}\n{replace_xyz_prev=}\n{use_state_prev=}\n{use_pair_prev=}\n{use_msa=}\n{use_msa_prev=}\n{a3m_name=}\n{map_name=}\n{pdb_name=}\n{prediction_pdb=}\n{n_recycles=}\n{dock_cycle=}\n{plddt_cutoff=}\n{fit_score_threshold=}\n{long_jump_threshold=}\n{clash_threshold=}\n{temp_conf=}\n{min_split_length=}\n{freeze_masked_msa2pair=}"
 with open(f"{out_dir}/hyperparams.txt", "w") as f:
     f.write(hyperparams)
 
@@ -116,6 +117,7 @@ with torch.no_grad():
     idx_pdb = idx_pdb.to(pred.device)
     xyz_t = xyz_t[:, :, 1, :].to(pred.device)  # select alpha carbon
     mask_t_2d = mask_t_2d.to(pred.device)
+    msa2pair_freeze_mask = torch.ones(L, L)
     alpha_t = alpha_t.to(pred.device)
 
     msa_prev = None
@@ -461,4 +463,6 @@ with torch.no_grad():
                 seq = torch.zeros_like(seq)
             if not use_msa_prev:
                 msa_prev = torch.zeros_like(msa_prev)
+            if freeze_masked_msa2pair:
+                msa2pair_freeze_mask = torch.einsum("i,j->ij", new_mask, new_mask)
 

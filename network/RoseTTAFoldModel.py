@@ -38,7 +38,8 @@ class RoseTTAFoldModule(nn.Module):
                                             n_head_pair=n_head_pair,
                                             SE3_param_full=SE3_param_full,
                                             SE3_param_topk=SE3_param_topk,
-                                            p_drop=p_drop)
+                                            p_drop=p_drop,
+                                            )
         ##
         self.c6d_pred = DistanceNetwork(d_pair, p_drop=p_drop)
         self.aa_pred = MaskedTokenNetwork(d_msa, p_drop=p_drop)
@@ -55,7 +56,9 @@ class RoseTTAFoldModule(nn.Module):
                 return_raw=False, return_full=False,
                 use_checkpoint=False, p2p_crop=-1, topk_crop=-1,
                 symmids=None, symmsub=None, symmRs=None, symmmeta=None,
-                striping=None, low_vram=False):
+                striping=None, low_vram=False,
+                msa2pair_freeze_mask=None,
+                ):
         if symmids is None:
             symmids = torch.tensor([[0]], device=xyz.device) # C1
         oligo = symmids.shape[0]
@@ -116,7 +119,8 @@ class RoseTTAFoldModule(nn.Module):
             seq, msa_latent, msa_full, pair, xyz[:,:,:3], state, idx, 
             striping, symmids, symmsub, symmRs, symmmeta,
             use_checkpoint=use_checkpoint, p2p_crop=p2p_crop, topk_crop=topk_crop, 
-            low_vram=low_vram
+            low_vram=low_vram,
+            msa2pair_freeze_mask=msa2pair_freeze_mask
         )
 
         if return_raw:
