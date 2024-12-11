@@ -105,7 +105,7 @@ def compute_pae_enrichment(pae_array: torch.Tensor):
     sum_intra_split_pae = F + H - F.T - H.T - 2 * sum_inter_split_pae
 
     return (sum_intra_split_pae * all_slice_lens) / (
-            (sum_inter_split_pae + 1e-9) * (pae_cumsum.shape[0] - 1 - all_slice_lens))
+            sum_inter_split_pae * (chain_length - all_slice_lens) + 1e-9)
 
 
 def split_by_pae(
