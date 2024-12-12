@@ -464,5 +464,5 @@ with torch.no_grad():
             if not use_msa_prev:
                 msa_prev = torch.zeros_like(msa_prev)
             if freeze_masked_msa2pair:
-                msa2pair_freeze_mask = torch.einsum("i,j->ij", new_mask.all(dim=-1), new_mask.all(dim=-1))
+                msa2pair_freeze_mask = ~torch.einsum("i,j->ij", new_mask.all(dim=-1), new_mask.all(dim=-1))
 
