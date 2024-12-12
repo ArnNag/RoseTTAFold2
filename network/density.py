@@ -160,7 +160,7 @@ def split_by_pae(
 
 def test_split_by_pae():
 
-    block_sizes = [3, 2, 5]
+    block_sizes = [3, 2, 3, 10, 2]
     total_size = sum(block_sizes)
     block_matrix = torch.ones((total_size, total_size))
     current_index = 0
