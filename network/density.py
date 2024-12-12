@@ -135,16 +135,9 @@ def split_by_pae(
         if search_start_idx + min_split_length >= search_end_idx:
             return []
 
-        print(f"{search_start_idx=}")
-        print(f"{search_end_idx=}")
-        print(f"pae_enrichment[search_start_idx:][:search_end_idx]")
-        print(f"{pae_enrichment[search_start_idx:][:search_end_idx]}")
-        print(f"{pae_enrichment[search_start_idx:][:search_end_idx].shape}")
         flattened_argmax = torch.argmax(pae_enrichment[search_start_idx:,:search_end_idx]).item()
-        print(f"{flattened_argmax=}")
         best_start = search_start_idx + flattened_argmax // (chain_length + 1) + 1
         best_end = flattened_argmax % (chain_length + 1)
-        print(f"{best_start=}, {best_end=}")
 
         best_slice_before = split_by_pae_for_region(
             search_start_idx=search_start_idx,
