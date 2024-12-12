@@ -13,9 +13,9 @@ from icecream import ic
 from datetime import datetime
 from pathlib import Path
 
-a3m_name = "atpbind"
-map_name = None
-pdb_name = "atpbind"
+a3m_name = "atpbind_atom"
+map_name = "emd_14914"
+pdb_name = None
 replace_template = True
 replace_xyz_prev = True
 use_state_prev = True

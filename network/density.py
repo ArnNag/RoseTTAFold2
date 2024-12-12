@@ -8,7 +8,6 @@ import glob
 
 from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init, Pose
 
-from network.scoring import HbPolyType
 from parsers import parse_pdb_w_seq
 
 # init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
