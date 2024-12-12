@@ -338,7 +338,7 @@ class MSA2Pair(nn.Module):
             right = right / float(N)
             out = einsum('bsli,bsmj->blmij', left, right).reshape(B, L, L, -1)
             out = self.proj_out(out)
-            if freeze_mask is None:
+            if self.freeze_mask is None:
                 pair = pair + out
             else:
                 pair = pair + einsum("bijh,bij->bijh", out, freeze_mask)

@@ -13,9 +13,9 @@ from icecream import ic
 from datetime import datetime
 from pathlib import Path
 
-a3m_name = "atpbind_atom"
-map_name = "emd_14914"
-pdb_name = None
+a3m_name = "atpbind"
+map_name = None
+pdb_name = "atpbind"
 replace_template = True
 replace_xyz_prev = True
 use_state_prev = True
@@ -405,7 +405,6 @@ with torch.no_grad():
                 elif pdb_name == "atpbind_modelangelo":
                     splits_with_ends = [0, L]
                     new_mask_by_split = torch.tensor([True])
-
                 else:
                     raise ValueError(f"Unknown pdb name provided: {pdb_name}")
 
@@ -415,8 +414,6 @@ with torch.no_grad():
                     end_idx = splits_with_ends[split_idx + 1]
                     new_mask[start_idx:end_idx, :] = torch.logical_and(new_mask[start_idx:end_idx, :],
                                                                        new_mask_by_split[split_idx])
-
-                np.savez(f"new_mask_cycle_{i_cycle}", new_mask)
 
                 new_xyz = util.realign_missing(new_xyz, new_mask, sigma=0.5)
 
@@ -467,5 +464,5 @@ with torch.no_grad():
             if not use_msa_prev:
                 msa_prev = torch.zeros_like(msa_prev)
             if freeze_masked_msa2pair:
-                msa2pair_freeze_mask = torch.einsum("i,j->ij", new_mask.all(dim=-1), new_mask.all(dim=-1))
+                msa2pair_freeze_mask = torch.einsum("i,j->ij", new_mask, new_mask)
 
