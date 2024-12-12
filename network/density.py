@@ -8,7 +8,6 @@ import glob
 
 from pyrosetta import rosetta, pose_from_pdb, get_fa_scorefxn, init, Pose
 
-from network.scoring import HbPolyType
 from parsers import parse_pdb_w_seq
 
 # init("-beta -crystal_refine -mute core -unmute core.scoring.electron_density -multithreading:total_threads 4")
@@ -84,6 +83,7 @@ def multidock_model(allfiles: list[str], mapfile: str) -> rosetta.core.pose.Pose
 
 
 def compute_pae_enrichment(pae_array: torch.Tensor):
+    pae_array = pae_array.float()
     chain_length = pae_array.shape[0]
     pae_cumsum_rows = torch.cumsum(pae_array, dim=0)
     pae_cumsum = torch.cumsum(pae_cumsum_rows, dim=1)
@@ -95,7 +95,7 @@ def compute_pae_enrichment(pae_array: torch.Tensor):
     # | D | E | F |
     # | G | H | I |
 
-    all_idxs = torch.arange(chain_length + 1)
+    all_idxs = torch.arange(chain_length + 1, device=pae_array.device)
     all_slice_lens = all_idxs[None, :] - all_idxs[:, None]
     A = pae_cumsum.diag().expand(chain_length + 1, chain_length + 1)
     F = pae_cumsum[-1,:].expand(chain_length + 1, chain_length + 1)
@@ -119,57 +119,55 @@ def split_by_pae(
     assert min_split_length > 0
 
     pae_enrichment = compute_pae_enrichment(pae_array)
+    pae_enrichment = pae_enrichment - torch.tril(torch.full_like(pae_enrichment, torch.inf), diagonal=(min_split_length - 1))
+    print(f"{pae_enrichment=}")
+    print(pae_enrichment.shape)
 
     def split_by_pae_for_region(
             search_start_idx: int,
             search_end_idx: int,
     ) -> list[int]:
 
-        assert chain_length >= search_end_idx
+        assert chain_length + 1 >= search_end_idx
         assert search_end_idx >= search_start_idx
         assert search_start_idx >= 0
 
         if search_start_idx + min_split_length >= search_end_idx:
             return []
 
-        best_pae_region_scale_factor = -float("inf")
-        best_slice = slice(search_start_idx, search_end_idx)
-        best_slice_length = -1
-        for start_idx in range(search_start_idx, search_end_idx - min_split_length + 1):
-            for end_idx in range(start_idx + min_split_length, search_end_idx + 1):
-                test_slice = slice(start_idx, end_idx)
-                test_slice_length = end_idx - start_idx
-                pae_region_scale_factor: float = pae_enrichment[start_idx,end_idx]
-                if pae_region_scale_factor > best_pae_region_scale_factor or (
-                        pae_region_scale_factor == best_pae_region_scale_factor
-                        and test_slice_length > best_slice_length
-                ):
-                    best_slice = test_slice
-                    best_pae_region_scale_factor = pae_region_scale_factor
-                    best_slice_length = test_slice_length
+        print(f"{search_start_idx=}")
+        print(f"{search_end_idx=}")
+        print(f"pae_enrichment[search_start_idx:][:search_end_idx]")
+        print(f"{pae_enrichment[search_start_idx:][:search_end_idx]}")
+        print(f"{pae_enrichment[search_start_idx:][:search_end_idx].shape}")
+        flattened_argmax = torch.argmax(pae_enrichment[search_start_idx:,:search_end_idx]).item()
+        print(f"{flattened_argmax=}")
+        best_start = search_start_idx + flattened_argmax // (chain_length + 1) + 1
+        best_end = flattened_argmax % (chain_length + 1)
+        print(f"{best_start=}, {best_end=}")
 
         best_slice_before = split_by_pae_for_region(
             search_start_idx=search_start_idx,
-            search_end_idx=best_slice.start,
+            search_end_idx=best_start,
         )
 
         best_slice_after = split_by_pae_for_region(
-            search_start_idx=best_slice.stop,
+            search_start_idx=best_end,
             search_end_idx=search_end_idx,
         )
 
-        best_slice_before.append(best_slice.stop)
+        best_slice_before.append(best_end)
         best_slice_before.extend(best_slice_after)
         return best_slice_before
 
     return split_by_pae_for_region(
-        search_start_idx=0, search_end_idx=chain_length
+        search_start_idx=0, search_end_idx=chain_length + 1
     )[:-1]
 
 
 def test_split_by_pae():
 
-    block_sizes = [7, 2, 7, 10]
+    block_sizes = [3, 2, 5]
     total_size = sum(block_sizes)
     block_matrix = torch.ones((total_size, total_size))
     current_index = 0
