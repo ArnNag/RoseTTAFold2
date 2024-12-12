@@ -95,7 +95,7 @@ def compute_pae_enrichment(pae_array: torch.Tensor):
     # | D | E | F |
     # | G | H | I |
 
-    all_idxs = torch.arange(chain_length + 1)
+    all_idxs = torch.arange(chain_length + 1, device=pae_array.device)
     all_slice_lens = all_idxs[None, :] - all_idxs[:, None]
     A = pae_cumsum.diag().expand(chain_length + 1, chain_length + 1)
     F = pae_cumsum[-1,:].expand(chain_length + 1, chain_length + 1)
